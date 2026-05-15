@@ -48,6 +48,12 @@ docker compose exec chatbot python scripts/fetch_today_meals.py
 POST /kakao/callback
 ```
 
+AI 응답은 카카오 Callback API를 지원합니다.
+
+- 카카오 요청의 `userRequest.callbackUrl`이 있으면 서버는 5초 안에 `{"version":"2.0","useCallback":true}`를 먼저 반환합니다.
+- 실제 OpenAI 응답, 메뉴 카드, 캐러셀은 백그라운드에서 `callbackUrl`로 POST 전송합니다.
+- `callbackUrl`이 없는 테스트 요청은 기존처럼 동기 응답을 바로 반환합니다.
+
 SQLite DB는 Docker volume `efoo-data`의 `/data/efoo_chatbot.db`에 저장됩니다.
 
 한양대 학식 크롤링 식당 코드는 `.env`의 `HANYANG_RESTAURANTS`로 설정합니다.
