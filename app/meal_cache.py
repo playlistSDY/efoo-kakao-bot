@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import logging
 
 from sqlalchemy import select
@@ -103,5 +103,11 @@ def get_meal_cache_status(db: Session, target_date: date, now: datetime) -> dict
 
 def _normalize_datetime(value: datetime, now: datetime) -> datetime:
     if value.tzinfo is None and now.tzinfo is not None:
-        return value.replace(tzinfo=now.tzinfo)
+        local_assumed = value.replace(tzinfo=now.tzinfo)
+        utc_assumed = value.replace(tzinfo=UTC).astimezone(now.tzinfo)
+        local_age = abs((now - local_assumed).total_seconds())
+        utc_age = abs((now - utc_assumed).total_seconds())
+        if utc_age < local_age:
+            return utc_assumed
+        return local_assumed
     return value

@@ -4,6 +4,7 @@ import logging
 import re
 import ssl
 import time
+from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
@@ -392,6 +393,7 @@ class MealFetcher:
         return saved_count
 
     def _upsert_fetch_log(self, db: Session, restaurant_id: int, target_date: date, status: str, message: str) -> None:
+        fetched_at = datetime.now(ZoneInfo(settings.APP_TIMEZONE))
         fetch_log = db.scalar(
             select(MealFetchLog).where(
                 MealFetchLog.restaurant_id == restaurant_id,
@@ -399,9 +401,9 @@ class MealFetcher:
             )
         )
         if not fetch_log:
-            fetch_log = MealFetchLog(restaurant_id=restaurant_id, date=target_date, fetched_at=datetime.now(), status=status)
+            fetch_log = MealFetchLog(restaurant_id=restaurant_id, date=target_date, fetched_at=fetched_at, status=status)
             db.add(fetch_log)
-        fetch_log.fetched_at = datetime.now()
+        fetch_log.fetched_at = fetched_at
         fetch_log.status = status
         fetch_log.message = message[:500]
         db.commit()

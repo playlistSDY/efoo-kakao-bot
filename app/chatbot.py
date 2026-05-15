@@ -133,16 +133,26 @@ def format_meals_for_prompt(meals: list[Meal], now: datetime | None = None) -> s
         menu = ", ".join(meal.korean_name or [])
         tags = f" [{', '.join(meal.tags)}]" if meal.tags else ""
         price = f" / {meal.price}" if meal.price else ""
-        status = f" / 현재상태: {meal_type_status(restaurant_code, meal.meal_type, now)}" if now else ""
+        status = ""
+        if now and meal.date == now.date():
+            status = f" / 오늘 현재상태: {meal_type_status(restaurant_code, meal.meal_type, now)}"
         lines.append(f"- {restaurant} {meal.meal_type}({meal_date}): {menu}{tags}{price}{status}")
     return "\n".join(lines)
+
+
+def format_target_date_text(target_date: date) -> str:
+    weekdays = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+    return f"{target_date.year}-{target_date.month:02d}-{target_date.day:02d} {weekdays[target_date.weekday()]}"
 
 
 class AgentState(TypedDict, total=False):
     user_text: str
     now_text: str
     target_date: str
+    target_date_text: str
+    is_target_today: bool
     meal_types: list[str]
+    meal_count: int
     profile_text: str
     history_text: str
     restaurant_context: str
@@ -169,7 +179,10 @@ class MealChatAgent:
                 "user_text": user_text,
                 "now_text": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
                 "target_date": str(target_date),
+                "target_date_text": format_target_date_text(target_date),
+                "is_target_today": target_date == now.date(),
                 "meal_types": meal_types or ["조식", "중식", "석식"],
+                "meal_count": len(meals),
                 "profile_text": self._profile_text(user),
                 "history_text": "\n".join(f"{m.role}: {m.content}" for m in recent),
                 "restaurant_context": format_restaurant_context(),
@@ -216,8 +229,13 @@ class MealChatAgent:
                     "메뉴 데이터가 없으면 없다고 말하고 임의 메뉴를 만들지 않는다. "
                     "사용자의 날짜 표현은 서버가 target_date로 변환해서 제공한다. "
                     "답변할 때는 이 target_date와 DB 학식 데이터의 날짜를 신뢰한다. "
-                    "현재 시간이 해당 식사의 운영 종료 이후라면 추천 전에 아쉽지만 지금은 운영이 끝났을 가능성이 크다고 알려준다. "
-                    "운영 전이면 시작 시간을 알려주고 기다릴 수 있는지 안내한다. 운영 중이면 바로 이용 가능하다고 말한다. "
+                    "조회된 학식 데이터 개수가 1개 이상이면 절대로 데이터가 없다고 말하지 않는다. "
+                    "조회 대상 식사가 조식, 중식, 석식이면 특정 식사 하나만 묻는 것이 아니라 해당 날짜 전체 후보를 보는 것이다. "
+                    "현재 시각 기준 운영 종료, 운영 전, 운영 중 판단은 조회 대상 날짜가 오늘일 때만 적용한다. "
+                    "조회 대상 날짜가 오늘이 아니면 현재 시각 때문에 이미 닫혔다고 말하지 않는다. "
+                    "미래 날짜를 묻는 경우에는 해당 날짜의 메뉴 후보를 추천하고, 운영시간은 참고 정보로만 짧게 안내한다. "
+                    "오늘 메뉴에서 현재 시간이 해당 식사의 운영 종료 이후라면 추천 전에 아쉽지만 지금은 운영이 끝났을 가능성이 크다고 알려준다. "
+                    "오늘 메뉴가 운영 전이면 시작 시간을 알려주고 기다릴 수 있는지 안내한다. 오늘 메뉴가 운영 중이면 바로 이용 가능하다고 말한다. "
                     "현재 날짜/시간이나 날씨가 필요하면 제공된 도구를 호출한다. "
                     "식당 위치, 줄임말, 운영시간 질문은 제공된 식당 기본 정보를 기준으로 답한다. "
                     "날씨를 고려해 추천할 때는 비/기온/체감온도에 맞춰 이동 부담이나 따뜻한 메뉴 선호를 설명한다. "
@@ -237,12 +255,14 @@ class MealChatAgent:
             HumanMessage(
                 content=(
                     f"기본 현재 시각: {state['now_text']}\n"
-                    f"조회 대상 날짜: {state.get('target_date', '알 수 없음')}\n"
+                    f"조회 대상 날짜: {state.get('target_date_text') or state.get('target_date', '알 수 없음')}\n"
+                    f"조회 대상이 오늘인지: {'예' if state.get('is_target_today') else '아니오'}\n"
                     f"조회 대상 식사: {', '.join(state.get('meal_types', [])) or '알 수 없음'}\n"
+                    f"조회된 학식 데이터 개수: {state.get('meal_count', 0)}\n"
                     f"사용자 기록: {state['profile_text']}\n"
                     f"최근 대화:\n{state['history_text'] or '없음'}\n\n"
                     f"식당 기본 정보:\n{state['restaurant_context']}\n\n"
-                    f"현재 시각 기준 운영 상태:\n{state['open_status_context']}\n\n"
+                    f"오늘 현재 시각 기준 운영 상태:\n{state['open_status_context']}\n\n"
                     f"DB 학식 데이터:\n{state['meal_context']}\n\n"
                     f"사용자 메시지: {state['user_text']}"
                 )
