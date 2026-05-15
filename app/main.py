@@ -45,19 +45,23 @@ def health_check():
 
 @app.get("/test/chat")
 def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-user", db: Session = Depends(get_db)):
+    now = datetime.now(ZoneInfo(settings.APP_TIMEZONE))
     user = repo.get_or_create_user(db, user_id)
     session = repo.get_or_create_active_session(db, user)
     repo.add_message(db, session.id, "user", message, {"source": "test-chat"})
 
     answer = meal_chat_agent.run(db, user, session, message)
     repo.add_message(db, session.id, "assistant", answer)
-    _, _, meals = load_meal_context(db, message, datetime.now(ZoneInfo(settings.APP_TIMEZONE)))
+    target_date, _, meals = load_meal_context(db, message, now)
+    attach_cards = should_attach_meal_cards(message, target_date, meals)
 
     return {
         "user_id": user_id,
         "message": message,
+        "target_date": str(target_date),
+        "attach_cards": attach_cards,
         "answer": answer,
-        "kakao_response": build_kakao_response(answer, meals),
+        "kakao_response": build_kakao_response(answer, meals if attach_cards else []),
     }
 
 
@@ -67,7 +71,13 @@ def kakao_callback(payload: KakaoRequest, background_tasks: BackgroundTasks, db:
     user_info = user_request.get("user") or {}
     kakao_user_id = str(user_info.get("id") or user_info.get("properties", {}).get("plusfriendUserKey") or "anonymous")
     utterance = str(user_request.get("utterance") or "").strip()
-    callback_url = user_request.get("callbackUrl")
+    callback_url = find_callback_url(payload.model_dump())
+    logger.info(
+        "카카오 스킬 요청 수신: user=%s callback=%s utterance=%s",
+        kakao_user_id,
+        bool(callback_url),
+        utterance,
+    )
 
     if callback_url:
         background_tasks.add_task(
@@ -89,6 +99,28 @@ def kakao_callback(payload: KakaoRequest, background_tasks: BackgroundTasks, db:
     return create_chat_response(db, kakao_user_id, utterance, payload.model_dump())
 
 
+@app.get("/test/callback")
+def test_callback_shape(message: str = "오늘 점심 추천해줘"):
+    payload = {
+        "userRequest": {
+            "utterance": message,
+            "callbackUrl": "https://example.com/kakao-callback-url",
+            "user": {"id": "callback-shape-test"},
+        }
+    }
+    return {
+        "request_example": payload,
+        "initial_response": {
+            "version": "2.0",
+            "useCallback": True,
+            "data": {
+                "text": random_wait_message(),
+                "utterance": message,
+            },
+        },
+    }
+
+
 def create_chat_response(db: Session, kakao_user_id: str, utterance: str, raw_payload: dict) -> dict:
     now = datetime.now(ZoneInfo(settings.APP_TIMEZONE))
 
@@ -98,9 +130,66 @@ def create_chat_response(db: Session, kakao_user_id: str, utterance: str, raw_pa
 
     answer = meal_chat_agent.run(db, user, session, utterance)
     repo.add_message(db, session.id, "assistant", answer)
-    _, _, meals = load_meal_context(db, utterance, now)
+    target_date, _, meals = load_meal_context(db, utterance, now)
 
-    return build_kakao_response(answer, meals)
+    return build_kakao_response(answer, meals if should_attach_meal_cards(utterance, target_date, meals) else [])
+
+
+def find_callback_url(payload: dict) -> str | None:
+    user_request = payload.get("userRequest") or {}
+    candidates = [
+        user_request.get("callbackUrl"),
+        user_request.get("callback_url"),
+        payload.get("callbackUrl"),
+        payload.get("callback_url"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+def should_attach_meal_cards(utterance: str, target_date, meals: list) -> bool:
+    if not meals:
+        return False
+
+    text = utterance.strip()
+    menu_keywords = [
+        "메뉴",
+        "학식",
+        "밥",
+        "식사",
+        "먹",
+        "추천",
+        "조식",
+        "아침",
+        "중식",
+        "점심",
+        "석식",
+        "저녁",
+    ]
+    info_only_keywords = [
+        "어디",
+        "위치",
+        "몇층",
+        "몇 층",
+        "운영시간",
+        "몇시",
+        "몇 시",
+        "열어",
+        "닫아",
+        "마감",
+        "줄임말",
+    ]
+
+    asks_menu = any(keyword in text for keyword in menu_keywords)
+    info_only = any(keyword in text for keyword in info_only_keywords) and not any(
+        keyword in text for keyword in ["메뉴", "먹", "추천", "뭐"]
+    )
+    if not asks_menu or info_only:
+        return False
+
+    return all(meal.date == target_date for meal in meals)
 
 
 def send_kakao_callback_response(callback_url: str, kakao_user_id: str, utterance: str, raw_payload: dict) -> None:
