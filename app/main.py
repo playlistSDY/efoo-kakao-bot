@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import SessionLocal, get_db, init_db
 from app.kakao_templates import build_kakao_response
 from app.scheduler import shutdown_scheduler, start_scheduler
+from app.wait_messages import random_wait_message
 
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,8 @@ def kakao_callback(payload: KakaoRequest, background_tasks: BackgroundTasks, db:
             "version": "2.0",
             "useCallback": True,
             "data": {
-                "text": "잠깐만요, 학식 정보랑 운영시간을 같이 확인하고 있어요. 곧 답변드릴게요!",
+                "text": random_wait_message(),
+                "utterance": utterance,
             },
         }
 
