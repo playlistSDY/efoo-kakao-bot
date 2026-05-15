@@ -141,6 +141,8 @@ def format_meals_for_prompt(meals: list[Meal], now: datetime | None = None) -> s
 class AgentState(TypedDict, total=False):
     user_text: str
     now_text: str
+    target_date: str
+    meal_types: list[str]
     profile_text: str
     history_text: str
     restaurant_context: str
@@ -235,8 +237,8 @@ class MealChatAgent:
             HumanMessage(
                 content=(
                     f"기본 현재 시각: {state['now_text']}\n"
-                    f"조회 대상 날짜: {state['target_date']}\n"
-                    f"조회 대상 식사: {', '.join(state['meal_types'])}\n"
+                    f"조회 대상 날짜: {state.get('target_date', '알 수 없음')}\n"
+                    f"조회 대상 식사: {', '.join(state.get('meal_types', [])) or '알 수 없음'}\n"
                     f"사용자 기록: {state['profile_text']}\n"
                     f"최근 대화:\n{state['history_text'] or '없음'}\n\n"
                     f"식당 기본 정보:\n{state['restaurant_context']}\n\n"

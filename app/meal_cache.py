@@ -54,8 +54,16 @@ def ensure_fresh_meals(db: Session, target_date: date, now: datetime) -> dict:
                 continue
 
             logger.info("학식 캐시 갱신: restaurant=%s date=%s", restaurant_code, target_date)
-            meal_fetcher.fetch_and_store_for_date(db, target_date, [restaurant_code])
-            refreshed.append(restaurant_code)
+            try:
+                meal_fetcher.fetch_and_store_for_date(db, target_date, [restaurant_code])
+                refreshed.append(restaurant_code)
+            except Exception:
+                logger.exception(
+                    "학식 캐시 갱신 실패, 기존 DB 데이터로 진행: restaurant=%s date=%s",
+                    restaurant_code,
+                    target_date,
+                )
+                reused.append(restaurant_code)
 
     return {
         "target_date": str(target_date),
