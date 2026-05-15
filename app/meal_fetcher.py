@@ -3,7 +3,6 @@ from typing import Dict, List
 import logging
 import re
 import ssl
-import threading
 import time
 
 import requests
@@ -18,8 +17,6 @@ from app.entities import Meal, MealFetchLog, Restaurant
 from app.restaurant_info import get_restaurant_info
 
 logger = logging.getLogger(__name__)
-
-_meal_fetch_lock = threading.Lock()
 
 
 class SSLAdapter(HTTPAdapter):
@@ -295,31 +292,24 @@ class MealFetcher:
         self.meal_service = MealService()
 
     def fetch_and_store_meals(self, db: Session):
-        if not _meal_fetch_lock.acquire(blocking=False):
-            logger.warning("급식 정보 수집이 이미 진행 중입니다.")
-            return 0
+        fetch_start_time = time.time()
+        today = date.today()
+        end_date = today + timedelta(days=settings.MEAL_FETCH_DAYS_AHEAD)
 
-        try:
-            fetch_start_time = time.time()
-            today = date.today()
-            end_date = today + timedelta(days=settings.MEAL_FETCH_DAYS_AHEAD)
+        total_saved = 0
+        for restaurant_code, restaurant_name in settings.RESTAURANT_CODES.items():
+            restaurant = self._get_or_create_restaurant(db, restaurant_code, restaurant_name)
+            current_date = today
+            while current_date <= end_date:
+                total_saved += self._fetch_and_store_single_day(db, restaurant, restaurant_code, current_date)
+                current_date += timedelta(days=1)
 
-            total_saved = 0
-            for restaurant_code, restaurant_name in settings.RESTAURANT_CODES.items():
-                restaurant = self._get_or_create_restaurant(db, restaurant_code, restaurant_name)
-                current_date = today
-                while current_date <= end_date:
-                    total_saved += self._fetch_and_store_single_day(db, restaurant, restaurant_code, current_date)
-                    current_date += timedelta(days=1)
-
-            logger.info(
-                "급식 정보 수집 완료. 총 %s개 저장/갱신, 소요시간 %.2f초",
-                total_saved,
-                time.time() - fetch_start_time,
-            )
-            return total_saved
-        finally:
-            _meal_fetch_lock.release()
+        logger.info(
+            "급식 정보 수집 완료. 총 %s개 저장/갱신, 소요시간 %.2f초",
+            total_saved,
+            time.time() - fetch_start_time,
+        )
+        return total_saved
 
     def fetch_and_store_for_date(
         self,
@@ -327,27 +317,20 @@ class MealFetcher:
         target_date: date,
         restaurant_codes: list[str] | None = None,
     ) -> int:
-        if not _meal_fetch_lock.acquire(blocking=False):
-            logger.warning("급식 정보 수집이 이미 진행 중입니다.")
-            return 0
-
-        try:
-            total_saved = 0
-            codes = restaurant_codes or list(settings.RESTAURANT_CODES.keys())
-            for restaurant_code in codes:
-                restaurant_name = settings.RESTAURANT_CODES[restaurant_code]
-                restaurant = self._get_or_create_restaurant(db, restaurant_code, restaurant_name)
-                try:
-                    saved_count = self._fetch_and_store_single_day(db, restaurant, restaurant_code, target_date)
-                    self._upsert_fetch_log(db, restaurant.id, target_date, "success", f"{saved_count}개 저장/갱신")
-                    total_saved += saved_count
-                except Exception as exc:
-                    self._upsert_fetch_log(db, restaurant.id, target_date, "failed", str(exc))
-                    logger.exception("%s %s 급식 정보 수집 실패", restaurant_code, target_date)
-                    raise
-            return total_saved
-        finally:
-            _meal_fetch_lock.release()
+        total_saved = 0
+        codes = restaurant_codes or list(settings.RESTAURANT_CODES.keys())
+        for restaurant_code in codes:
+            restaurant_name = settings.RESTAURANT_CODES[restaurant_code]
+            restaurant = self._get_or_create_restaurant(db, restaurant_code, restaurant_name)
+            try:
+                saved_count = self._fetch_and_store_single_day(db, restaurant, restaurant_code, target_date)
+                self._upsert_fetch_log(db, restaurant.id, target_date, "success", f"{saved_count}개 저장/갱신")
+                total_saved += saved_count
+            except Exception as exc:
+                self._upsert_fetch_log(db, restaurant.id, target_date, "failed", str(exc))
+                logger.exception("%s %s 급식 정보 수집 실패", restaurant_code, target_date)
+                raise
+        return total_saved
 
     def _fetch_and_store_single_day(self, db: Session, restaurant: Restaurant, restaurant_code: str, target_date: date) -> int:
         html_content = self.meal_service.get_meal_html(

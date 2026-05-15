@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import re
 from typing import TypedDict
 from zoneinfo import ZoneInfo
 
@@ -17,6 +18,24 @@ from app.restaurant_info import format_open_status_context, format_restaurant_co
 from app.tools import CHAT_TOOLS
 
 
+WEEKDAY_TO_INDEX = {
+    "월요일": 0,
+    "월욜": 0,
+    "화요일": 1,
+    "화욜": 1,
+    "수요일": 2,
+    "수욜": 2,
+    "목요일": 3,
+    "목욜": 3,
+    "금요일": 4,
+    "금욜": 4,
+    "토요일": 5,
+    "토욜": 5,
+    "일요일": 6,
+    "일욜": 6,
+}
+
+
 def infer_target_date(text: str, now: datetime | None = None) -> date:
     now = now or datetime.now(ZoneInfo(settings.APP_TIMEZONE))
     if "모레" in text:
@@ -25,22 +44,74 @@ def infer_target_date(text: str, now: datetime | None = None) -> date:
         return (now + timedelta(days=1)).date()
     if "어제" in text:
         return (now - timedelta(days=1)).date()
+    explicit_date = _infer_explicit_date(text, now)
+    if explicit_date:
+        return explicit_date
+    weekday_date = _infer_weekday_date(text, now)
+    if weekday_date:
+        return weekday_date
     return now.date()
 
 
 def infer_meal_types(text: str, now: datetime | None = None) -> list[str] | None:
+    now = now or datetime.now(ZoneInfo(settings.APP_TIMEZONE))
     if "아침" in text or "조식" in text:
         return ["조식"]
     if "점심" in text or "중식" in text:
         return ["중식"]
     if "저녁" in text or "석식" in text:
         return ["석식"]
-    now = now or datetime.now(ZoneInfo(settings.APP_TIMEZONE))
+
+    target_date = infer_target_date(text, now)
+    if target_date != now.date():
+        return None
+
     if now.hour < 10:
         return ["조식", "중식"]
     if now.hour < 16:
         return ["중식"]
     return ["석식"]
+
+
+def _infer_weekday_date(text: str, now: datetime) -> date | None:
+    match = re.search(r"(지난|저번|이번|다음)?\s*(월요일|월욜|화요일|화욜|수요일|수욜|목요일|목욜|금요일|금욜|토요일|토욜|일요일|일욜)(?:날|에)?", text)
+    if not match:
+        return None
+
+    modifier = match.group(1) or ""
+    weekday_text = match.group(2)
+    target_weekday = WEEKDAY_TO_INDEX[weekday_text]
+    today_weekday = now.weekday()
+
+    if modifier in {"지난", "저번"}:
+        days_back = (today_weekday - target_weekday) % 7 or 7
+        return (now - timedelta(days=days_back)).date()
+
+    days_ahead = (target_weekday - today_weekday) % 7
+    if modifier == "다음" and days_ahead == 0:
+        days_ahead = 7
+    return (now + timedelta(days=days_ahead)).date()
+
+
+def _infer_explicit_date(text: str, now: datetime) -> date | None:
+    month_day = re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일", text)
+    if month_day:
+        month = int(month_day.group(1))
+        day = int(month_day.group(2))
+        try:
+            return date(now.year, month, day)
+        except ValueError:
+            return None
+
+    day_only = re.search(r"(?<!월\s)(\d{1,2})\s*일", text)
+    if day_only:
+        day = int(day_only.group(1))
+        try:
+            return date(now.year, now.month, day)
+        except ValueError:
+            return None
+
+    return None
 
 
 def load_meal_context(db: Session, text: str, now: datetime | None = None) -> tuple[date, list[str] | None, list[Meal]]:
@@ -58,11 +129,12 @@ def format_meals_for_prompt(meals: list[Meal], now: datetime | None = None) -> s
     for meal in meals:
         restaurant = meal.restaurant.name if meal.restaurant else f"식당#{meal.restaurant_id}"
         restaurant_code = meal.restaurant.code if meal.restaurant else ""
+        meal_date = f"{meal.date.month}월 {meal.date.day}일"
         menu = ", ".join(meal.korean_name or [])
         tags = f" [{', '.join(meal.tags)}]" if meal.tags else ""
         price = f" / {meal.price}" if meal.price else ""
         status = f" / 현재상태: {meal_type_status(restaurant_code, meal.meal_type, now)}" if now else ""
-        lines.append(f"- {restaurant} {meal.meal_type}: {menu}{tags}{price}{status}")
+        lines.append(f"- {restaurant} {meal.meal_type}({meal_date}): {menu}{tags}{price}{status}")
     return "\n".join(lines)
 
 
@@ -94,6 +166,8 @@ class MealChatAgent:
             {
                 "user_text": user_text,
                 "now_text": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                "target_date": str(target_date),
+                "meal_types": meal_types or ["조식", "중식", "석식"],
                 "profile_text": self._profile_text(user),
                 "history_text": "\n".join(f"{m.role}: {m.content}" for m in recent),
                 "restaurant_context": format_restaurant_context(),
@@ -138,6 +212,8 @@ class MealChatAgent:
                     "반드시 제공된 DB 학식 데이터 안에서만 메뉴를 안내한다. "
                     "사용자의 알러지, 취향, 예산, 현재 날짜와 시간을 반영해 추천한다. "
                     "메뉴 데이터가 없으면 없다고 말하고 임의 메뉴를 만들지 않는다. "
+                    "사용자의 날짜 표현은 서버가 target_date로 변환해서 제공한다. "
+                    "답변할 때는 이 target_date와 DB 학식 데이터의 날짜를 신뢰한다. "
                     "현재 시간이 해당 식사의 운영 종료 이후라면 추천 전에 아쉽지만 지금은 운영이 끝났을 가능성이 크다고 알려준다. "
                     "운영 전이면 시작 시간을 알려주고 기다릴 수 있는지 안내한다. 운영 중이면 바로 이용 가능하다고 말한다. "
                     "현재 날짜/시간이나 날씨가 필요하면 제공된 도구를 호출한다. "
@@ -159,6 +235,8 @@ class MealChatAgent:
             HumanMessage(
                 content=(
                     f"기본 현재 시각: {state['now_text']}\n"
+                    f"조회 대상 날짜: {state['target_date']}\n"
+                    f"조회 대상 식사: {', '.join(state['meal_types'])}\n"
                     f"사용자 기록: {state['profile_text']}\n"
                     f"최근 대화:\n{state['history_text'] or '없음'}\n\n"
                     f"식당 기본 정보:\n{state['restaurant_context']}\n\n"

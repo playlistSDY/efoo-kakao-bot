@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app import repositories as repo
 from app.config import settings
 from app.entities import MealFetchLog
+from app.fetch_locks import meal_fetch_lock
 from app.meal_fetcher import meal_fetcher
 
 
@@ -34,9 +35,27 @@ def ensure_fresh_meals(db: Session, target_date: date, now: datetime) -> dict:
             logger.info("학식 캐시 사용: restaurant=%s date=%s fetched_at=%s", restaurant_code, target_date, fetch_log.fetched_at)
             continue
 
-        logger.info("학식 캐시 갱신: restaurant=%s date=%s", restaurant_code, target_date)
-        meal_fetcher.fetch_and_store_for_date(db, target_date, [restaurant_code])
-        refreshed.append(restaurant_code)
+        with meal_fetch_lock(restaurant_code, target_date):
+            fetch_log = db.scalar(
+                select(MealFetchLog).where(
+                    MealFetchLog.restaurant_id == restaurant.id,
+                    MealFetchLog.date == target_date,
+                    MealFetchLog.status == "success",
+                )
+            )
+            if fetch_log and now - _normalize_datetime(fetch_log.fetched_at, now) < MEAL_CACHE_TTL:
+                reused.append(restaurant_code)
+                logger.info(
+                    "학식 캐시 대기 후 사용: restaurant=%s date=%s fetched_at=%s",
+                    restaurant_code,
+                    target_date,
+                    fetch_log.fetched_at,
+                )
+                continue
+
+            logger.info("학식 캐시 갱신: restaurant=%s date=%s", restaurant_code, target_date)
+            meal_fetcher.fetch_and_store_for_date(db, target_date, [restaurant_code])
+            refreshed.append(restaurant_code)
 
     return {
         "target_date": str(target_date),
