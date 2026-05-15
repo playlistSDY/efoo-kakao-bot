@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.entities import ChatSession, Meal, UserProfile
+from app.meal_cache import ensure_fresh_meals
 from app import repositories as repo
 from app.restaurant_info import format_open_status_context, format_restaurant_context, meal_type_status
 from app.tools import CHAT_TOOLS
@@ -43,8 +44,10 @@ def infer_meal_types(text: str, now: datetime | None = None) -> list[str] | None
 
 
 def load_meal_context(db: Session, text: str, now: datetime | None = None) -> tuple[date, list[str] | None, list[Meal]]:
+    now = now or datetime.now(ZoneInfo(settings.APP_TIMEZONE))
     target_date = infer_target_date(text, now)
     meal_types = infer_meal_types(text, now)
+    ensure_fresh_meals(db, target_date, now)
     return target_date, meal_types, repo.get_meals_flexible(db, target_date=target_date, meal_types=meal_types)
 
 
@@ -117,7 +120,7 @@ class MealChatAgent:
         messages = [
             SystemMessage(
                 content=(
-                    "너는 대학교 학식 안내 및 추천 카카오톡 챗봇이다. "
+                    "너는 대학교 학식 안내 및 추천 카카오톡 챗봇 '에푸'이다. "
                     "반드시 제공된 DB 학식 데이터 안에서만 메뉴를 안내한다. "
                     "사용자의 알러지, 취향, 예산, 현재 날짜와 시간을 반영해 추천한다. "
                     "메뉴 데이터가 없으면 없다고 말하고 임의 메뉴를 만들지 않는다. "
@@ -126,10 +129,14 @@ class MealChatAgent:
                     "현재 날짜/시간이나 날씨가 필요하면 제공된 도구를 호출한다. "
                     "식당 위치, 줄임말, 운영시간 질문은 제공된 식당 기본 정보를 기준으로 답한다. "
                     "날씨를 고려해 추천할 때는 비/기온/체감온도에 맞춰 이동 부담이나 따뜻한 메뉴 선호를 설명한다. "
+                    "사용자가 특정 식당이나 특정 식사 시간의 메뉴를 물으면, 해당되는 메뉴 항목은 답변 본문에 빠짐없이 모두 포함한다. "
+                    "메뉴 카드가 따로 붙더라도 카드에 의존하지 말고 텍스트 본문만 읽어도 전체 메뉴를 알 수 있게 작성한다. "
+                    "여러 메뉴가 있으면 메뉴1, 메뉴2처럼 짧게 나누어 적는다. "
                     "말투는 친근한 AI 친구처럼 자연스럽게 한다. "
                     "다만 과장하거나 없는 정보를 만들지 말고, 확실하지 않은 내용은 조심스럽게 말한다. "
                     "카카오톡 답변이므로 한국어로 짧고 실용적으로 답한다. "
                     "카카오톡에서 읽기 쉽도록 답변은 줄바꿈을 적극 사용하고, 한 줄은 15자 이하가 되게 작성한다. "
+                    "마크다운 문법은 사용하지 않는다. 굵게, 제목, 코드블록, 표, 목록 기호(*, **, -, #, `) 없이 일반 텍스트와 줄바꿈만 사용한다. "
                     "추천할 때는 한 줄 요약, 이유, 운영시간 주의사항 순서로 읽기 쉽게 답한다."
                 )
             ),

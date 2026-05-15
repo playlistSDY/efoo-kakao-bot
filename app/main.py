@@ -14,7 +14,6 @@ from app.config import settings
 from app.database import SessionLocal, get_db, init_db
 from app.kakao_templates import build_kakao_response
 from app.response_policy import choose_kakao_presentation
-from app.scheduler import shutdown_scheduler, start_scheduler
 from app.wait_messages import random_wait_message
 
 
@@ -24,9 +23,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    start_scheduler()
     yield
-    shutdown_scheduler()
 
 
 app = FastAPI(title="Efoo 학식 추천 카카오톡 챗봇", lifespan=lifespan)

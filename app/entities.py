@@ -43,6 +43,18 @@ class Meal(Base):
     restaurant = relationship("Restaurant", back_populates="meals")
 
 
+class MealFetchLog(Base):
+    __tablename__ = "meal_fetch_logs"
+    __table_args__ = (Index("idx_meal_fetch_log_restaurant_date", "restaurant_id", "date", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    restaurant_id: Mapped[int] = mapped_column(ForeignKey("cafeteria.id"), nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="success")
+    message: Mapped[str | None] = mapped_column(String(500))
+
+
 class UserProfile(Base):
     __tablename__ = "user_profiles"
 

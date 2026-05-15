@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from urllib3 import poolmanager
 
 from app.config import settings
-from app.entities import Meal, Restaurant
+from app.entities import Meal, MealFetchLog, Restaurant
 from app.restaurant_info import get_restaurant_info
 
 logger = logging.getLogger(__name__)
@@ -321,6 +321,34 @@ class MealFetcher:
         finally:
             _meal_fetch_lock.release()
 
+    def fetch_and_store_for_date(
+        self,
+        db: Session,
+        target_date: date,
+        restaurant_codes: list[str] | None = None,
+    ) -> int:
+        if not _meal_fetch_lock.acquire(blocking=False):
+            logger.warning("급식 정보 수집이 이미 진행 중입니다.")
+            return 0
+
+        try:
+            total_saved = 0
+            codes = restaurant_codes or list(settings.RESTAURANT_CODES.keys())
+            for restaurant_code in codes:
+                restaurant_name = settings.RESTAURANT_CODES[restaurant_code]
+                restaurant = self._get_or_create_restaurant(db, restaurant_code, restaurant_name)
+                try:
+                    saved_count = self._fetch_and_store_single_day(db, restaurant, restaurant_code, target_date)
+                    self._upsert_fetch_log(db, restaurant.id, target_date, "success", f"{saved_count}개 저장/갱신")
+                    total_saved += saved_count
+                except Exception as exc:
+                    self._upsert_fetch_log(db, restaurant.id, target_date, "failed", str(exc))
+                    logger.exception("%s %s 급식 정보 수집 실패", restaurant_code, target_date)
+                    raise
+            return total_saved
+        finally:
+            _meal_fetch_lock.release()
+
     def _fetch_and_store_single_day(self, db: Session, restaurant: Restaurant, restaurant_code: str, target_date: date) -> int:
         html_content = self.meal_service.get_meal_html(
             restaurant_code,
@@ -333,9 +361,6 @@ class MealFetcher:
 
         for meal_type in ["조식", "중식", "석식"]:
             meals = meal_data.get(meal_type, [])
-            if not meals:
-                continue
-
             existing_meals = db.scalars(
                 select(Meal).where(
                     Meal.restaurant_id == restaurant.id,
@@ -343,6 +368,12 @@ class MealFetcher:
                     Meal.meal_type == meal_type,
                 )
             ).all()
+
+            if not meals:
+                for existing_meal in existing_meals:
+                    db.delete(existing_meal)
+                db.commit()
+                continue
 
             updated_existing_ids = set()
             for i, meal_item in enumerate(meals):
@@ -376,6 +407,21 @@ class MealFetcher:
             db.commit()
 
         return saved_count
+
+    def _upsert_fetch_log(self, db: Session, restaurant_id: int, target_date: date, status: str, message: str) -> None:
+        fetch_log = db.scalar(
+            select(MealFetchLog).where(
+                MealFetchLog.restaurant_id == restaurant_id,
+                MealFetchLog.date == target_date,
+            )
+        )
+        if not fetch_log:
+            fetch_log = MealFetchLog(restaurant_id=restaurant_id, date=target_date, fetched_at=datetime.now(), status=status)
+            db.add(fetch_log)
+        fetch_log.fetched_at = datetime.now()
+        fetch_log.status = status
+        fetch_log.message = message[:500]
+        db.commit()
 
     def _get_or_create_restaurant(self, db: Session, code: str, name: str) -> Restaurant:
         restaurant = db.scalar(select(Restaurant).where(Restaurant.code == code))

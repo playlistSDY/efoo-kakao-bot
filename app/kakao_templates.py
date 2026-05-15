@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
-
 from app.entities import Meal
 
 
@@ -29,12 +27,11 @@ def build_kakao_response(answer: str, meals: list[Meal] | None = None) -> dict:
     meals = meals or []
     if not meals:
         return simple_text(answer)
-    text = _build_text_with_full_menu(answer, meals)
     if len(meals) >= 2:
-        return _carousel(text, meals[:10])
+        return _carousel(answer, meals[:10])
     if meals[0].image_url:
-        return _basic_card(text, meals[0])
-    return simple_text(text)
+        return _basic_card(answer, meals[0])
+    return simple_text(answer)
 
 
 def _basic_card(answer: str, meal: Meal) -> dict:
@@ -94,7 +91,7 @@ def _carousel(answer: str, meals: list[Meal]) -> dict:
 
 def _meal_title(meal: Meal) -> str:
     restaurant = meal.restaurant.name if meal.restaurant else "식당"
-    return f"{restaurant} {meal.meal_type}"
+    return f"{restaurant} {meal.meal_type} ({meal.date.month}월 {meal.date.day}일)"
 
 
 def _meal_description(meal: Meal) -> str:
@@ -110,47 +107,6 @@ def _meal_card_description(meal: Meal) -> str:
     more_count = max(len(meal.korean_name or []) - 3, 0)
     more = f" 외 {more_count}개" if more_count else ""
     return f"{menu}{more}{price}"
-
-
-def _build_text_with_full_menu(answer: str, meals: list[Meal]) -> str:
-    menu_text = _full_menu_text(meals)
-    if not menu_text:
-        return answer
-    return _limit(f"{answer}\n\n메뉴 전체\n{menu_text}", SIMPLE_TEXT_LIMIT)
-
-
-def _full_menu_text(meals: list[Meal]) -> str:
-    grouped = defaultdict(list)
-    for meal in meals:
-        restaurant = meal.restaurant.name if meal.restaurant else "식당"
-        grouped[(restaurant, meal.meal_type)].append(meal)
-
-    lines = []
-    for (restaurant, meal_type), group in grouped.items():
-        lines.append(f"[{restaurant} {meal_type}]")
-        for index, meal in enumerate(group, start=1):
-            menu = _wrap_menu_items(meal.korean_name or [])
-            price = f" ({meal.price})" if meal.price else ""
-            lines.append(f"{index}. {menu}{price}")
-    return "\n".join(lines)
-
-
-def _wrap_menu_items(items: list[str]) -> str:
-    if not items:
-        return "메뉴명 없음"
-    lines = []
-    current = ""
-    for item in items:
-        candidate = item if not current else f"{current}, {item}"
-        if len(candidate) <= 28:
-            current = candidate
-        else:
-            if current:
-                lines.append(current)
-            current = item
-    if current:
-        lines.append(current)
-    return "\n   ".join(lines)
 
 
 def _compact_menu(items: list[str], max_items: int) -> str:
