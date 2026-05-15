@@ -146,13 +146,21 @@ def format_target_date_text(target_date: date) -> str:
 
 
 class AgentState(TypedDict, total=False):
+    db: Session
+    user: UserProfile
+    session: ChatSession
     user_text: str
+    now: datetime
     now_text: str
+    target_date_obj: date
     target_date: str
     target_date_text: str
     is_target_today: bool
+    requested_meal_types: list[str] | None
     meal_types: list[str]
     meal_count: int
+    meals: list[Meal]
+    lookup: dict
     profile_text: str
     history_text: str
     restaurant_context: str
@@ -160,6 +168,7 @@ class AgentState(TypedDict, total=False):
     meal_context: str
     answer: str
     tool_calls: list[dict]
+    agent_steps: list[str]
 
 
 class MealChatAgent:
@@ -171,42 +180,84 @@ class MealChatAgent:
 
     def run_debug(self, db: Session, user: UserProfile, session: ChatSession, user_text: str) -> dict:
         now = datetime.now(ZoneInfo(settings.APP_TIMEZONE))
-        repo.update_profile_from_text(db, user, user_text)
-        target_date, meal_types, meals = load_meal_context(db, user_text, now)
-        recent = repo.get_recent_messages(db, session.id)
         result = self.graph.invoke(
             {
+                "db": db,
+                "user": user,
+                "session": session,
                 "user_text": user_text,
                 "now_text": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
-                "target_date": str(target_date),
-                "target_date_text": format_target_date_text(target_date),
-                "is_target_today": target_date == now.date(),
-                "meal_types": meal_types or ["조식", "중식", "석식"],
-                "meal_count": len(meals),
-                "profile_text": self._profile_text(user),
-                "history_text": "\n".join(f"{m.role}: {m.content}" for m in recent),
-                "restaurant_context": format_restaurant_context(),
-                "open_status_context": format_open_status_context(now),
-                "meal_context": format_meals_for_prompt(meals, now),
+                "now": now,
+                "agent_steps": [],
             }
         )
         return {
             "answer": result["answer"],
-            "lookup": {
-                "target_date": str(target_date),
-                "meal_types": meal_types,
-                "meal_count": len(meals),
-                "restaurants": sorted({meal.restaurant.code for meal in meals if meal.restaurant}),
-            },
+            "lookup": result["lookup"],
             "tool_calls": result.get("tool_calls", []),
+            "agent_steps": result.get("agent_steps", []),
+            "target_date": result.get("target_date"),
+            "meals": result.get("meals", []),
         }
 
     def _build_graph(self):
         graph = StateGraph(AgentState)
+        graph.add_node("remember_user", self._remember_user)
+        graph.add_node("resolve_lookup", self._resolve_lookup)
+        graph.add_node("load_context", self._load_context)
         graph.add_node("generate", self._generate)
-        graph.set_entry_point("generate")
+        graph.set_entry_point("remember_user")
+        graph.add_edge("remember_user", "resolve_lookup")
+        graph.add_edge("resolve_lookup", "load_context")
+        graph.add_edge("load_context", "generate")
         graph.add_edge("generate", END)
         return graph.compile()
+
+    def _remember_user(self, state: AgentState) -> AgentState:
+        db = state["db"]
+        user = state["user"]
+        repo.update_profile_from_text(db, user, state["user_text"])
+        return {
+            "profile_text": self._profile_text(user),
+            "agent_steps": state.get("agent_steps", []) + ["remember_user"],
+        }
+
+    def _resolve_lookup(self, state: AgentState) -> AgentState:
+        db = state["db"]
+        now = state["now"]
+        user_text = state["user_text"]
+        target_date = infer_target_date(user_text, now)
+        meal_types = infer_meal_types(user_text, now)
+        ensure_fresh_meals(db, target_date, now)
+        meals = repo.get_meals_flexible(db, target_date=target_date, meal_types=meal_types)
+        lookup = {
+            "target_date": str(target_date),
+            "meal_types": meal_types,
+            "meal_count": len(meals),
+            "restaurants": sorted({meal.restaurant.code for meal in meals if meal.restaurant}),
+        }
+        return {
+            "target_date_obj": target_date,
+            "target_date": str(target_date),
+            "target_date_text": format_target_date_text(target_date),
+            "is_target_today": target_date == now.date(),
+            "requested_meal_types": meal_types,
+            "meal_types": meal_types or ["조식", "중식", "석식"],
+            "meal_count": len(meals),
+            "meals": meals,
+            "lookup": lookup,
+            "meal_context": format_meals_for_prompt(meals, now),
+            "agent_steps": state.get("agent_steps", []) + ["resolve_lookup"],
+        }
+
+    def _load_context(self, state: AgentState) -> AgentState:
+        recent = repo.get_recent_messages(state["db"], state["session"].id)
+        return {
+            "history_text": "\n".join(f"{m.role}: {m.content}" for m in recent),
+            "restaurant_context": format_restaurant_context(),
+            "open_status_context": format_open_status_context(state["now"]),
+            "agent_steps": state.get("agent_steps", []) + ["load_context"],
+        }
 
     def _generate(self, state: AgentState) -> AgentState:
         if not settings.OPENAI_API_KEY:
@@ -215,6 +266,7 @@ class MealChatAgent:
                 f"현재 조회된 학식 정보:\n{state['meal_context']}"
             )
             state["tool_calls"] = []
+            state["agent_steps"] = state.get("agent_steps", []) + ["generate"]
             return state
 
         llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL, temperature=0.4)
@@ -294,6 +346,7 @@ class MealChatAgent:
 
         state["answer"] = str(response.content)
         state["tool_calls"] = executed_tool_calls
+        state["agent_steps"] = state.get("agent_steps", []) + ["generate"]
         return state
 
     def _profile_text(self, user: UserProfile) -> str:

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import repositories as repo
-from app.chatbot import load_meal_context, meal_chat_agent
+from app.chatbot import infer_target_date, meal_chat_agent
 from app.config import settings
 from app.database import SessionLocal, get_db, init_db
 from app.kakao_templates import build_kakao_response
@@ -52,7 +52,8 @@ def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-
     debug_result = meal_chat_agent.run_debug(db, user, session, message)
     answer = debug_result["answer"]
     repo.add_message(db, session.id, "assistant", answer)
-    target_date, _, meals = load_meal_context(db, message, now)
+    target_date = infer_target_date(message, now)
+    meals = debug_result.get("meals", [])
     presentation = choose_kakao_presentation(message, target_date, meals)
 
     return {
@@ -60,6 +61,7 @@ def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-
         "message": message,
         "target_date": str(target_date),
         "lookup": debug_result["lookup"],
+        "agent_steps": debug_result.get("agent_steps", []),
         "tool_calls": debug_result["tool_calls"],
         "cache": get_meal_cache_status(db, target_date, now),
         "presentation": presentation.__dict__,
@@ -131,9 +133,11 @@ def create_chat_response(db: Session, kakao_user_id: str, utterance: str, raw_pa
     session = repo.get_or_create_active_session(db, user)
     repo.add_message(db, session.id, "user", utterance, raw_payload)
 
-    answer = meal_chat_agent.run(db, user, session, utterance)
+    debug_result = meal_chat_agent.run_debug(db, user, session, utterance)
+    answer = debug_result["answer"]
     repo.add_message(db, session.id, "assistant", answer)
-    target_date, _, meals = load_meal_context(db, utterance, now)
+    target_date = infer_target_date(utterance, now)
+    meals = debug_result.get("meals", [])
     presentation = choose_kakao_presentation(utterance, target_date, meals)
 
     return build_kakao_response(answer, meals if presentation.attach_meal_cards else [])
