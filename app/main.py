@@ -13,6 +13,7 @@ from app.chatbot import load_meal_context, meal_chat_agent
 from app.config import settings
 from app.database import SessionLocal, get_db, init_db
 from app.kakao_templates import build_kakao_response
+from app.meal_cache import get_meal_cache_status
 from app.response_policy import choose_kakao_presentation
 from app.wait_messages import random_wait_message
 
@@ -48,7 +49,8 @@ def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-
     session = repo.get_or_create_active_session(db, user)
     repo.add_message(db, session.id, "user", message, {"source": "test-chat"})
 
-    answer = meal_chat_agent.run(db, user, session, message)
+    debug_result = meal_chat_agent.run_debug(db, user, session, message)
+    answer = debug_result["answer"]
     repo.add_message(db, session.id, "assistant", answer)
     target_date, _, meals = load_meal_context(db, message, now)
     presentation = choose_kakao_presentation(message, target_date, meals)
@@ -57,6 +59,9 @@ def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-
         "user_id": user_id,
         "message": message,
         "target_date": str(target_date),
+        "lookup": debug_result["lookup"],
+        "tool_calls": debug_result["tool_calls"],
+        "cache": get_meal_cache_status(db, target_date, now),
         "presentation": presentation.__dict__,
         "answer": answer,
         "kakao_response": build_kakao_response(answer, meals if presentation.attach_meal_cards else []),

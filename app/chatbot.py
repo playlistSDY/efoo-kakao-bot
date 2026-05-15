@@ -75,6 +75,7 @@ class AgentState(TypedDict, total=False):
     open_status_context: str
     meal_context: str
     answer: str
+    tool_calls: list[dict]
 
 
 class MealChatAgent:
@@ -82,9 +83,12 @@ class MealChatAgent:
         self.graph = self._build_graph()
 
     def run(self, db: Session, user: UserProfile, session: ChatSession, user_text: str) -> str:
+        return self.run_debug(db, user, session, user_text)["answer"]
+
+    def run_debug(self, db: Session, user: UserProfile, session: ChatSession, user_text: str) -> dict:
         now = datetime.now(ZoneInfo(settings.APP_TIMEZONE))
         repo.update_profile_from_text(db, user, user_text)
-        _, _, meals = load_meal_context(db, user_text, now)
+        target_date, meal_types, meals = load_meal_context(db, user_text, now)
         recent = repo.get_recent_messages(db, session.id)
         result = self.graph.invoke(
             {
@@ -97,7 +101,16 @@ class MealChatAgent:
                 "meal_context": format_meals_for_prompt(meals, now),
             }
         )
-        return result["answer"]
+        return {
+            "answer": result["answer"],
+            "lookup": {
+                "target_date": str(target_date),
+                "meal_types": meal_types,
+                "meal_count": len(meals),
+                "restaurants": sorted({meal.restaurant.code for meal in meals if meal.restaurant}),
+            },
+            "tool_calls": result.get("tool_calls", []),
+        }
 
     def _build_graph(self):
         graph = StateGraph(AgentState)
@@ -112,6 +125,7 @@ class MealChatAgent:
                 "아직 OPENAI_API_KEY가 설정되지 않아서 AI 추천은 잠시 쉬고 있어요.\n\n"
                 f"현재 조회된 학식 정보:\n{state['meal_context']}"
             )
+            state["tool_calls"] = []
             return state
 
         llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL, temperature=0.4)
@@ -137,6 +151,8 @@ class MealChatAgent:
                     "카카오톡 답변이므로 한국어로 짧고 실용적으로 답한다. "
                     "카카오톡에서 읽기 쉽도록 답변은 줄바꿈을 적극 사용하고, 한 줄은 15자 이하가 되게 작성한다. "
                     "마크다운 문법은 사용하지 않는다. 굵게, 제목, 코드블록, 표, 목록 기호(*, **, -, #, `) 없이 일반 텍스트와 줄바꿈만 사용한다. "
+                    "'궁금한 점이 있으면 언제든지 물어봐' 같은 추가 질문 유도 문구나 일반적인 마무리 인사는 쓰지 않는다. "
+                    "답변은 사용자가 물어본 내용까지만 처리하고 끝낸다. "
                     "추천할 때는 한 줄 요약, 이유, 운영시간 주의사항 순서로 읽기 쉽게 답한다."
                 )
             ),
@@ -155,6 +171,7 @@ class MealChatAgent:
 
         response = llm_with_tools.invoke(messages)
         messages.append(response)
+        executed_tool_calls = []
         for tool_call in getattr(response, "tool_calls", []) or []:
             selected_tool = tool_map.get(tool_call["name"])
             if not selected_tool:
@@ -164,11 +181,19 @@ class MealChatAgent:
             except Exception as exc:
                 tool_result = f"도구 실행 실패: {exc}"
             messages.append(ToolMessage(content=str(tool_result), tool_call_id=tool_call["id"]))
+            executed_tool_calls.append(
+                {
+                    "name": tool_call["name"],
+                    "args": tool_call.get("args") or {},
+                    "result": str(tool_result),
+                }
+            )
 
         if getattr(response, "tool_calls", None):
             response = llm_with_tools.invoke(messages)
 
         state["answer"] = str(response.content)
+        state["tool_calls"] = executed_tool_calls
         return state
 
     def _profile_text(self, user: UserProfile) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import logging
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ from app.meal_fetcher import meal_fetcher
 
 
 MEAL_CACHE_TTL = timedelta(minutes=30)
+logger = logging.getLogger(__name__)
 
 
 def ensure_fresh_meals(db: Session, target_date: date, now: datetime) -> dict:
@@ -29,8 +31,10 @@ def ensure_fresh_meals(db: Session, target_date: date, now: datetime) -> dict:
         )
         if fetch_log and now - _normalize_datetime(fetch_log.fetched_at, now) < MEAL_CACHE_TTL:
             reused.append(restaurant_code)
+            logger.info("학식 캐시 사용: restaurant=%s date=%s fetched_at=%s", restaurant_code, target_date, fetch_log.fetched_at)
             continue
 
+        logger.info("학식 캐시 갱신: restaurant=%s date=%s", restaurant_code, target_date)
         meal_fetcher.fetch_and_store_for_date(db, target_date, [restaurant_code])
         refreshed.append(restaurant_code)
 
@@ -39,6 +43,34 @@ def ensure_fresh_meals(db: Session, target_date: date, now: datetime) -> dict:
         "ttl_minutes": int(MEAL_CACHE_TTL.total_seconds() // 60),
         "reused": reused,
         "refreshed": refreshed,
+    }
+
+
+def get_meal_cache_status(db: Session, target_date: date, now: datetime) -> dict:
+    restaurants = {}
+    for restaurant_code, restaurant_name in settings.RESTAURANT_CODES.items():
+        restaurant = repo.get_or_create_restaurant(db, restaurant_code, restaurant_name)
+        fetch_log = db.scalar(
+            select(MealFetchLog).where(
+                MealFetchLog.restaurant_id == restaurant.id,
+                MealFetchLog.date == target_date,
+                MealFetchLog.status == "success",
+            )
+        )
+        if not fetch_log:
+            restaurants[restaurant_code] = {"fresh": False, "fetched_at": None}
+            continue
+        fetched_at = _normalize_datetime(fetch_log.fetched_at, now)
+        age_seconds = max((now - fetched_at).total_seconds(), 0)
+        restaurants[restaurant_code] = {
+            "fresh": age_seconds < MEAL_CACHE_TTL.total_seconds(),
+            "fetched_at": fetch_log.fetched_at.isoformat(),
+            "age_seconds": int(age_seconds),
+        }
+    return {
+        "target_date": str(target_date),
+        "ttl_seconds": int(MEAL_CACHE_TTL.total_seconds()),
+        "restaurants": restaurants,
     }
 
 
