@@ -8,57 +8,63 @@ CARD_TITLE_LIMIT = 40
 CARD_DESCRIPTION_LIMIT = 80
 
 
-def simple_text(text: str) -> dict:
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "simpleText": {
-                        "text": _limit(text, SIMPLE_TEXT_LIMIT),
+def simple_text(text: str, quick_replies: list[dict] | None = None) -> dict:
+    return _with_quick_replies(
+        {
+            "version": "2.0",
+            "template": {
+                "outputs": [
+                    {
+                        "simpleText": {
+                            "text": _limit(text, SIMPLE_TEXT_LIMIT),
+                        }
                     }
-                }
-            ]
+                ]
+            },
         },
-    }
+        quick_replies,
+    )
 
 
-def build_kakao_response(answer: str, meals: list[Meal] | None = None) -> dict:
+def build_kakao_response(answer: str, meals: list[Meal] | None = None, quick_replies: list[dict] | None = None) -> dict:
     meals = meals or []
     if not meals:
-        return simple_text(answer)
+        return simple_text(answer, quick_replies)
     if len(meals) >= 2:
-        return _carousel(answer, meals[:10])
+        return _carousel(answer, meals[:10], quick_replies)
     if meals[0].image_url:
-        return _basic_card(answer, meals[0])
-    return simple_text(answer)
+        return _basic_card(answer, meals[0], quick_replies)
+    return simple_text(answer, quick_replies)
 
 
-def _basic_card(answer: str, meal: Meal) -> dict:
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "basicCard": {
-                        "title": _meal_title(meal),
-                        "description": _meal_description(meal),
-                        "thumbnail": {
-                            "imageUrl": meal.image_url,
-                        },
-                    }
-                },
-                {
-                    "simpleText": {
-                        "text": _limit(answer, SIMPLE_TEXT_LIMIT),
-                    }
-                },
-            ]
+def _basic_card(answer: str, meal: Meal, quick_replies: list[dict] | None = None) -> dict:
+    return _with_quick_replies(
+        {
+            "version": "2.0",
+            "template": {
+                "outputs": [
+                    {
+                        "basicCard": {
+                            "title": _meal_title(meal),
+                            "description": _meal_description(meal),
+                            "thumbnail": {
+                                "imageUrl": meal.image_url,
+                            },
+                        }
+                    },
+                    {
+                        "simpleText": {
+                            "text": _limit(answer, SIMPLE_TEXT_LIMIT),
+                        }
+                    },
+                ]
+            },
         },
-    }
+        quick_replies,
+    )
 
 
-def _carousel(answer: str, meals: list[Meal]) -> dict:
+def _carousel(answer: str, meals: list[Meal], quick_replies: list[dict] | None = None) -> dict:
     items = []
     for meal in meals:
         item = {
@@ -69,24 +75,33 @@ def _carousel(answer: str, meals: list[Meal]) -> dict:
             item["thumbnail"] = {"imageUrl": meal.image_url}
         items.append(item)
 
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [
-                {
-                    "carousel": {
-                        "type": "basicCard",
-                        "items": items,
-                    }
-                },
-                {
-                    "simpleText": {
-                        "text": _limit(answer, SIMPLE_TEXT_LIMIT),
-                    }
-                },
-            ]
+    return _with_quick_replies(
+        {
+            "version": "2.0",
+            "template": {
+                "outputs": [
+                    {
+                        "carousel": {
+                            "type": "basicCard",
+                            "items": items,
+                        }
+                    },
+                    {
+                        "simpleText": {
+                            "text": _limit(answer, SIMPLE_TEXT_LIMIT),
+                        }
+                    },
+                ]
+            },
         },
-    }
+        quick_replies,
+    )
+
+
+def _with_quick_replies(response: dict, quick_replies: list[dict] | None) -> dict:
+    if quick_replies:
+        response["template"]["quickReplies"] = quick_replies[:5]
+    return response
 
 
 def _meal_title(meal: Meal) -> str:

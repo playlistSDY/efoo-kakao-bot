@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import SessionLocal, get_db, init_db
 from app.kakao_templates import build_kakao_response
 from app.meal_cache import get_meal_cache_status
+from app.quick_replies import build_quick_replies
 from app.response_policy import choose_kakao_presentation
 from app.wait_messages import random_wait_message
 
@@ -55,6 +56,13 @@ def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-
     target_date = infer_target_date(message, now)
     meals = debug_result.get("meals", [])
     presentation = choose_kakao_presentation(message, target_date, meals)
+    quick_replies = build_quick_replies(
+        message,
+        target_date,
+        meals,
+        bool(debug_result["lookup"].get("meal_intent")),
+        now,
+    )
 
     return {
         "user_id": user_id,
@@ -65,8 +73,9 @@ def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-
         "tool_calls": debug_result["tool_calls"],
         "cache": get_meal_cache_status(db, target_date, now),
         "presentation": presentation.__dict__,
+        "quick_replies": quick_replies,
         "answer": answer,
-        "kakao_response": build_kakao_response(answer, meals if presentation.attach_meal_cards else []),
+        "kakao_response": build_kakao_response(answer, meals if presentation.attach_meal_cards else [], quick_replies),
     }
 
 
@@ -139,8 +148,15 @@ def create_chat_response(db: Session, kakao_user_id: str, utterance: str, raw_pa
     target_date = infer_target_date(utterance, now)
     meals = debug_result.get("meals", [])
     presentation = choose_kakao_presentation(utterance, target_date, meals)
+    quick_replies = build_quick_replies(
+        utterance,
+        target_date,
+        meals,
+        bool(debug_result["lookup"].get("meal_intent")),
+        now,
+    )
 
-    return build_kakao_response(answer, meals if presentation.attach_meal_cards else [])
+    return build_kakao_response(answer, meals if presentation.attach_meal_cards else [], quick_replies)
 
 
 def find_callback_url(payload: dict) -> str | None:
