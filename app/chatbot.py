@@ -73,6 +73,44 @@ def infer_meal_types(text: str, now: datetime | None = None) -> list[str] | None
     return ["석식"]
 
 
+def infer_meal_intent(text: str) -> bool:
+    normalized = text.strip()
+    if not normalized:
+        return False
+    meal_keywords = [
+        "학식",
+        "교식",
+        "긱식",
+        "창보",
+        "창의",
+        "창의인재",
+        "기숙사식당",
+        "학생식당",
+        "교직원식당",
+        "창업보육",
+        "식당",
+        "메뉴",
+        "밥",
+        "먹",
+        "먹을까",
+        "조식",
+        "아침",
+        "중식",
+        "점심",
+        "석식",
+        "저녁",
+        "배고",
+        "식사",
+        "운영시간",
+        "몇시",
+        "몇 시",
+        "열어",
+        "닫아",
+        "마감",
+    ]
+    return any(keyword in normalized for keyword in meal_keywords)
+
+
 def _infer_weekday_date(text: str, now: datetime) -> date | None:
     match = re.search(r"(지난|저번|이번|다음)?\s*(월요일|월욜|화요일|화욜|수요일|수욜|목요일|목욜|금요일|금욜|토요일|토욜|일요일|일욜)(?:날|에)?", text)
     if not match:
@@ -156,6 +194,7 @@ class AgentState(TypedDict, total=False):
     target_date: str
     target_date_text: str
     is_target_today: bool
+    meal_intent: bool
     requested_meal_types: list[str] | None
     meal_types: list[str]
     meal_count: int
@@ -228,25 +267,34 @@ class MealChatAgent:
         user_text = state["user_text"]
         target_date = infer_target_date(user_text, now)
         meal_types = infer_meal_types(user_text, now)
-        ensure_fresh_meals(db, target_date, now)
-        meals = repo.get_meals_flexible(db, target_date=target_date, meal_types=meal_types)
+        meal_intent = infer_meal_intent(user_text)
+        meals = []
+        if meal_intent:
+            ensure_fresh_meals(db, target_date, now)
+            meals = repo.get_meals_flexible(db, target_date=target_date, meal_types=meal_types)
         lookup = {
             "target_date": str(target_date),
             "meal_types": meal_types,
             "meal_count": len(meals),
             "restaurants": sorted({meal.restaurant.code for meal in meals if meal.restaurant}),
+            "meal_intent": meal_intent,
         }
         return {
             "target_date_obj": target_date,
             "target_date": str(target_date),
             "target_date_text": format_target_date_text(target_date),
             "is_target_today": target_date == now.date(),
+            "meal_intent": meal_intent,
             "requested_meal_types": meal_types,
             "meal_types": meal_types or ["조식", "중식", "석식"],
             "meal_count": len(meals),
             "meals": meals,
             "lookup": lookup,
-            "meal_context": format_meals_for_prompt(meals, now),
+            "meal_context": (
+                format_meals_for_prompt(meals, now)
+                if meal_intent
+                else "이번 사용자 메시지는 학식/식당/메뉴 질문으로 판단되지 않았습니다."
+            ),
             "agent_steps": state.get("agent_steps", []) + ["resolve_lookup"],
         }
 
@@ -276,8 +324,12 @@ class MealChatAgent:
             SystemMessage(
                 content=(
                     "너는 대학교 학식 안내 및 추천 카카오톡 챗봇 '에푸'이다. "
-                    "반드시 제공된 DB 학식 데이터 안에서만 메뉴를 안내한다. "
-                    "사용자의 알러지, 취향, 예산, 현재 날짜와 시간을 반영해 추천한다. "
+                    "주 역할은 학식, 교내 식당, 메뉴, 운영시간, 위치 안내이다. "
+                    "하지만 사용자가 학식, 식당, 메뉴, 밥, 식사, 추천, 운영시간, 위치와 관련 없는 말을 하면 학식 이야기로 억지로 연결하지 않는다. "
+                    "학식 의도가 없는 질문에는 DB 학식 데이터를 언급하지 말고, 사용자가 물어본 내용에만 짧게 답한다. "
+                    "잡담이나 인사에는 자연스럽게 짧게 답하고, 학식 추천을 먼저 제안하지 않는다. "
+                    "학식이나 식당 질문일 때만 제공된 DB 학식 데이터 안에서 메뉴를 안내한다. "
+                    "학식이나 식당 질문일 때는 사용자의 알러지, 취향, 예산, 현재 날짜와 시간을 반영해 추천한다. "
                     "메뉴 데이터가 없으면 없다고 말하고 임의 메뉴를 만들지 않는다. "
                     "사용자의 날짜 표현은 서버가 target_date로 변환해서 제공한다. "
                     "답변할 때는 이 target_date와 DB 학식 데이터의 날짜를 신뢰한다. "
@@ -309,6 +361,7 @@ class MealChatAgent:
                     f"기본 현재 시각: {state['now_text']}\n"
                     f"조회 대상 날짜: {state.get('target_date_text') or state.get('target_date', '알 수 없음')}\n"
                     f"조회 대상이 오늘인지: {'예' if state.get('is_target_today') else '아니오'}\n"
+                    f"학식/식당 관련 의도인지: {'예' if state.get('meal_intent') else '아니오'}\n"
                     f"조회 대상 식사: {', '.join(state.get('meal_types', [])) or '알 수 없음'}\n"
                     f"조회된 학식 데이터 개수: {state.get('meal_count', 0)}\n"
                     f"사용자 기록: {state['profile_text']}\n"
