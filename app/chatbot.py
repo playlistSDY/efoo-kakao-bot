@@ -77,6 +77,13 @@ def infer_meal_intent(text: str) -> bool:
     normalized = text.strip()
     if not normalized:
         return False
+    compact = re.sub(r"\s+", "", normalized)
+    if any(keyword in compact for keyword in ["뭐나와", "뭐나옴", "뭐나오", "머나와", "머나옴"]):
+        return True
+    if re.search(r"(오늘|내일|모레|월요일|화요일|수요일|목요일|금요일|토요일|일요일|월욜|화욜|수욜|목욜|금욜|토욜|일욜).*(뭐|머).*(나와|나옴|나오|있어)", normalized):
+        return True
+    if re.search(r"\d{1,2}\s*월\s*\d{1,2}\s*일.*(뭐|머).*(나와|나옴|나오|있어)", normalized):
+        return True
     meal_keywords = [
         "학식",
         "교식",
@@ -396,7 +403,7 @@ class MealChatAgent:
         if getattr(response, "tool_calls", None):
             response = llm_with_tools.invoke(messages)
 
-        state["answer"] = str(response.content)
+        state["answer"] = _non_empty_answer(str(response.content), bool(state.get("meal_intent")))
         state["tool_calls"] = executed_tool_calls
         state["agent_steps"] = state.get("agent_steps", []) + ["generate"]
         return state
@@ -412,3 +419,12 @@ class MealChatAgent:
 
 
 meal_chat_agent = MealChatAgent()
+
+
+def _non_empty_answer(answer: str, meal_intent: bool) -> str:
+    normalized = answer.strip()
+    if normalized:
+        return normalized
+    if meal_intent:
+        return "에푸가 답변을 정리하다가 잠깐 멈췄어요.\n아래 버튼으로 다시 물어봐 주세요."
+    return "에푸가 답변을 만들지 못했어요.\n다시 한 번 말해 주세요."

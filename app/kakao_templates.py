@@ -6,9 +6,11 @@ from app.entities import Meal
 SIMPLE_TEXT_LIMIT = 1000
 CARD_TITLE_LIMIT = 40
 CARD_DESCRIPTION_LIMIT = 80
+EMPTY_TEXT_FALLBACK = "에푸가 답변을 만들지 못했어요.\n다시 한 번 말해 주세요."
 
 
 def simple_text(text: str, quick_replies: list[dict] | None = None) -> dict:
+    text = _safe_text(text)
     return _with_quick_replies(
         {
             "version": "2.0",
@@ -38,6 +40,7 @@ def build_kakao_response(answer: str, meals: list[Meal] | None = None, quick_rep
 
 
 def _basic_card(answer: str, meal: Meal, quick_replies: list[dict] | None = None) -> dict:
+    answer = _safe_text(answer)
     return _with_quick_replies(
         {
             "version": "2.0",
@@ -65,6 +68,7 @@ def _basic_card(answer: str, meal: Meal, quick_replies: list[dict] | None = None
 
 
 def _carousel(answer: str, meals: list[Meal], quick_replies: list[dict] | None = None) -> dict:
+    answer = _safe_text(answer)
     items = []
     for meal in meals:
         item = {
@@ -134,3 +138,7 @@ def _limit(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: max(limit - 12, 0)].rstrip() + "\n...더 있음"
+
+
+def _safe_text(text: str) -> str:
+    return text.strip() or EMPTY_TEXT_FALLBACK

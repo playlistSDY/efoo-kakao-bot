@@ -34,11 +34,11 @@ CALLBACK_TIMEOUT_MESSAGES = [
 ]
 
 CALLBACK_TIMEOUT_QUICK_REPLIES = [
-    {"label": "학생식당 메뉴", "action": "message", "messageText": "학생식당 메뉴 알려줘"},
-    {"label": "교직원식당 메뉴", "action": "message", "messageText": "교직원식당 메뉴 알려줘"},
-    {"label": "창의인재원 메뉴", "action": "message", "messageText": "창의인재원식당 메뉴 알려줘"},
-    {"label": "창업보육 메뉴", "action": "message", "messageText": "창업보육센터 메뉴 알려줘"},
-    {"label": "오늘 점심 메뉴", "action": "message", "messageText": "오늘 점심 메뉴 알려줘"},
+    {"label": "학식", "action": "message", "messageText": "학생식당 메뉴 알려줘"},
+    {"label": "교식", "action": "message", "messageText": "교직원식당 메뉴 알려줘"},
+    {"label": "창의", "action": "message", "messageText": "창의인재원식당 메뉴 알려줘"},
+    {"label": "창보", "action": "message", "messageText": "창업보육센터 메뉴 알려줘"},
+    {"label": "점심", "action": "message", "messageText": "오늘 점심 메뉴 알려줘"},
 ]
 
 
@@ -238,5 +238,12 @@ def build_callback_timeout_response() -> dict:
 
 def post_kakao_callback(callback_url: str, payload: dict) -> None:
     response = requests.post(callback_url, json=payload, timeout=10)
+    if response.status_code >= 400:
+        logger.error(
+            "카카오 callback POST 실패: status=%s body=%s payload=%s",
+            response.status_code,
+            response.text[:1000],
+            str(payload)[:2000],
+        )
     response.raise_for_status()
     logger.info("카카오 callback POST 완료: status=%s", response.status_code)

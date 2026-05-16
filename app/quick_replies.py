@@ -13,6 +13,7 @@ from app.entities import Meal
 
 MAX_QUICK_REPLIES = 5
 MAX_LABEL_LENGTH = 14
+MAX_LABEL_BYTES = 14
 MAX_MESSAGE_LENGTH = 100
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def _build_llm_quick_replies(
                         "사용자가 다음에 누르면 좋을 연계 질문을 1개에서 5개 만든다. "
                         "반드시 JSON 배열만 반환한다. 설명 문장, 마크다운, 코드블록은 쓰지 않는다. "
                         "각 항목은 label, messageText 필드만 가진다. "
-                        f"label은 한국어 {MAX_LABEL_LENGTH}자 이하로 짧게 쓴다. "
+                        "label은 한국어 4자 이하로 매우 짧게 쓴다. "
                         f"messageText는 {MAX_MESSAGE_LENGTH}자 이하의 자연스러운 사용자 질문으로 쓴다. "
                         "카카오 action 값은 서버가 붙이므로 만들지 않는다. "
                         "이미 사용자가 물어본 문장과 같은 질문은 피한다. "
@@ -88,21 +89,21 @@ def _fallback_quick_replies(utterance: str, target_date: date, meals: list[Meal]
     meal_types = _ordered_unique([meal.meal_type for meal in meals])
     if meals and len(meal_types) > 1:
         for meal_type in meal_types:
-            _add(suggestions, f"{meal_type}만 보기", f"{date_text} {meal_type} 메뉴")
+            _add(suggestions, meal_type, f"{date_text} {meal_type} 메뉴")
 
     restaurant_names = _ordered_unique([meal.restaurant.name for meal in meals if meal.restaurant])
     if meals and restaurant_names:
         for restaurant_name in restaurant_names[:2]:
-            _add(suggestions, f"{restaurant_name} 보기", f"{date_text} {restaurant_name} 메뉴")
+            _add(suggestions, _short_restaurant_label(restaurant_name), f"{date_text} {restaurant_name} 메뉴")
 
     if meals:
-        _add(suggestions, "운영시간 보기", f"{date_text} 식당 운영시간")
-        _add(suggestions, "위치 보기", "식당 위치 알려줘")
+        _add(suggestions, "운영시간", f"{date_text} 식당 운영시간")
+        _add(suggestions, "위치", "식당 위치 알려줘")
     else:
-        _add(suggestions, "오늘 메뉴", "오늘 메뉴 알려줘")
-        _add(suggestions, "내일 메뉴", "내일 메뉴 알려줘")
-        _add(suggestions, "점심 추천", "오늘 점심 추천해줘")
-        _add(suggestions, "식당 위치", "식당 위치 알려줘")
+        _add(suggestions, "오늘", "오늘 메뉴 알려줘")
+        _add(suggestions, "내일", "내일 메뉴 알려줘")
+        _add(suggestions, "점심", "오늘 점심 추천해줘")
+        _add(suggestions, "위치", "식당 위치 알려줘")
 
     return _format_quick_replies(suggestions)
 
@@ -145,13 +146,23 @@ def _format_quick_replies(suggestions: list[tuple[str, str]]) -> list[dict]:
 
 
 def _add(suggestions: list[tuple[str, str]], label: str, message_text: str) -> None:
-    label = _limit(label.strip(), MAX_LABEL_LENGTH)
+    label = _limit_bytes(_limit(label.strip(), MAX_LABEL_LENGTH), MAX_LABEL_BYTES)
     message_text = _limit(message_text.strip(), MAX_MESSAGE_LENGTH)
     if not label or not message_text:
         return
     if any(existing_label == label or existing_text == message_text for existing_label, existing_text in suggestions):
         return
     suggestions.append((label, message_text))
+
+
+def _short_restaurant_label(restaurant_name: str) -> str:
+    mapping = {
+        "학생식당": "학식",
+        "교직원식당": "교식",
+        "창의인재원식당": "창의",
+        "창업보육센터": "창보",
+    }
+    return mapping.get(restaurant_name, restaurant_name.replace("식당", "").replace("센터", "")[:4])
 
 
 def _has_blocked_topic(text: str) -> bool:
@@ -191,3 +202,15 @@ def _relative_date_text(target_date: date, today: date) -> str:
 
 def _limit(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip()
+
+
+def _limit_bytes(text: str, limit: int) -> str:
+    result = ""
+    used = 0
+    for char in text:
+        size = len(char.encode("utf-8"))
+        if used + size > limit:
+            break
+        result += char
+        used += size
+    return result.rstrip()
