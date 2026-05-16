@@ -40,7 +40,6 @@ class Settings:
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     APP_TIMEZONE: str = os.getenv("APP_TIMEZONE", "Asia/Seoul")
     HANYANG_BASE_URL: str = os.getenv("HANYANG_BASE_URL", "https://www.hanyang.ac.kr")
-    DEFAULT_WEATHER_LOCATION: str = os.getenv("DEFAULT_WEATHER_LOCATION", "Hanyang University Seoul")
     MEAL_FETCH_DAYS_AHEAD: int = _int_env("MEAL_FETCH_DAYS_AHEAD", 7)
     RESTAURANT_CODES: dict[str, str] = field(default_factory=_restaurants_env)
 

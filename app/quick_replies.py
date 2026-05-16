@@ -40,9 +40,6 @@ def build_quick_replies(
         _add(suggestions, "점심 추천", "오늘 점심 추천해줘")
         _add(suggestions, "식당 위치", "식당 위치 알려줘")
 
-    if "날씨" not in utterance and meals:
-        _add(suggestions, "날씨 고려 추천", f"{date_text} 날씨 고려해서 추천해줘")
-
     return [
         {
             "label": label,

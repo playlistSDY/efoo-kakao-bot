@@ -8,7 +8,7 @@ LangChain/LangGraph와 OpenAI API를 사용하는 학식 안내 및 추천용 �
 - 같은 날짜/식당 정보가 30분 안에 갱신된 경우 기존 DB 캐시 사용
 - 카카오톡 유저별 프로필, 채팅 세션, 대화 메시지 저장
 - 기존 알러지, 취향, 예산 기록과 현재 날짜/시간을 반영한 학식 안내
-- 챗봇이 필요할 때 현재 날짜/시간, 현재 날씨 도구 호출
+- 챗봇이 필요할 때 현재 날짜/시간 도구 호출
 - LangGraph 기반 응답 플로우와 OpenAI Chat API 사용
 
 ## Docker Compose 실행
@@ -80,9 +80,8 @@ HANYANG_RESTAURANTS=re11:교직원식당,re12:학생식당,re13:창의인재원�
 `app/tools.py`에 LangChain tool이 정의되어 있습니다.
 
 - `get_current_datetime`: `Asia/Seoul` 기준 현재 날짜, 요일, 시간 조회
-- `get_current_weather`: Open-Meteo API로 현재 날씨 조회
 
-사용자가 "오늘 몇 시야?", "지금 비 와?", "날씨 고려해서 점심 추천해줘"처럼 물으면 OpenAI 모델이 필요한 도구를 선택해 호출합니다. 기본 날씨 위치는 `.env`의 `DEFAULT_WEATHER_LOCATION` 값입니다.
+사용자가 "오늘 몇 시야?", "지금 몇 시야?"처럼 물으면 OpenAI 모델이 필요한 도구를 선택해 호출합니다.
 
 ## 로컬 실행
 

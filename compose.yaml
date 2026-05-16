@@ -8,7 +8,6 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/efoo_chatbot.db
       APP_TIMEZONE: Asia/Seoul
-      DEFAULT_WEATHER_LOCATION: Hanyang University Seoul
     ports:
       - "8000:8000"
     volumes:
