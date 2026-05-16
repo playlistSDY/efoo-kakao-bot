@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import json
+import logging
 from datetime import date, datetime, timedelta
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+
+from app.config import settings
 from app.entities import Meal
 
 
 MAX_QUICK_REPLIES = 5
+MAX_LABEL_LENGTH = 14
+MAX_MESSAGE_LENGTH = 100
+logger = logging.getLogger(__name__)
 
 
 def build_quick_replies(
@@ -14,10 +23,65 @@ def build_quick_replies(
     meals: list[Meal],
     meal_intent: bool,
     now: datetime,
+    answer: str = "",
 ) -> list[dict]:
     if not meal_intent:
         return []
 
+    llm_replies = _build_llm_quick_replies(utterance, target_date, meals, now, answer)
+    if llm_replies:
+        return llm_replies
+
+    return _fallback_quick_replies(utterance, target_date, meals, now)
+
+
+def _build_llm_quick_replies(
+    utterance: str,
+    target_date: date,
+    meals: list[Meal],
+    now: datetime,
+    answer: str,
+) -> list[dict]:
+    if not settings.OPENAI_API_KEY:
+        return []
+
+    try:
+        llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL, temperature=0.2)
+        response = llm.invoke(
+            [
+                SystemMessage(
+                    content=(
+                        "너는 카카오톡 챗봇의 quickReplies 후보를 만드는 도우미다. "
+                        "사용자가 다음에 누르면 좋을 연계 질문을 1개에서 5개 만든다. "
+                        "반드시 JSON 배열만 반환한다. 설명 문장, 마크다운, 코드블록은 쓰지 않는다. "
+                        "각 항목은 label, messageText 필드만 가진다. "
+                        f"label은 한국어 {MAX_LABEL_LENGTH}자 이하로 짧게 쓴다. "
+                        f"messageText는 {MAX_MESSAGE_LENGTH}자 이하의 자연스러운 사용자 질문으로 쓴다. "
+                        "카카오 action 값은 서버가 붙이므로 만들지 않는다. "
+                        "이미 사용자가 물어본 문장과 같은 질문은 피한다. "
+                        "학식, 식당, 메뉴, 운영시간, 위치와 직접 관련된 후속 질문만 만든다. "
+                        "날씨 관련 질문은 만들지 않는다. "
+                        "제공된 식당명, 식사명, 날짜 범위 안에서만 질문을 만든다."
+                    )
+                ),
+                HumanMessage(
+                    content=(
+                        f"현재 시각: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                        f"조회 날짜: {_relative_date_text(target_date, now.date())} ({target_date})\n"
+                        f"사용자 메시지: {utterance}\n"
+                        f"챗봇 답변: {answer or '없음'}\n"
+                        f"조회된 메뉴 요약:\n{_meal_summary(meals)}"
+                    )
+                ),
+            ]
+        )
+        return _sanitize_quick_replies(_parse_llm_payload(str(response.content)))
+    except Exception:
+        logger.exception("LLM quickReplies 생성 실패, 규칙 기반 fallback 사용")
+        return []
+
+
+def _fallback_quick_replies(utterance: str, target_date: date, meals: list[Meal], now: datetime) -> list[dict]:
     suggestions: list[tuple[str, str]] = []
     date_text = _relative_date_text(target_date, now.date())
 
@@ -40,6 +104,36 @@ def build_quick_replies(
         _add(suggestions, "점심 추천", "오늘 점심 추천해줘")
         _add(suggestions, "식당 위치", "식당 위치 알려줘")
 
+    return _format_quick_replies(suggestions)
+
+
+def _parse_llm_payload(content: str) -> list[dict]:
+    normalized = content.strip()
+    if normalized.startswith("```"):
+        normalized = normalized.strip("`").strip()
+        if normalized.startswith("json"):
+            normalized = normalized[4:].strip()
+
+    payload = json.loads(normalized)
+    if isinstance(payload, dict):
+        payload = payload.get("quick_replies") or payload.get("quickReplies") or payload.get("items") or []
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _sanitize_quick_replies(items: list[dict]) -> list[dict]:
+    suggestions: list[tuple[str, str]] = []
+    for item in items:
+        label = str(item.get("label") or "").strip()
+        message_text = str(item.get("messageText") or item.get("message") or "").strip()
+        if _has_blocked_topic(label) or _has_blocked_topic(message_text):
+            continue
+        _add(suggestions, label, message_text)
+    return _format_quick_replies(suggestions)
+
+
+def _format_quick_replies(suggestions: list[tuple[str, str]]) -> list[dict]:
     return [
         {
             "label": label,
@@ -51,13 +145,29 @@ def build_quick_replies(
 
 
 def _add(suggestions: list[tuple[str, str]], label: str, message_text: str) -> None:
-    label = _limit(label, 14)
-    message_text = message_text.strip()
+    label = _limit(label.strip(), MAX_LABEL_LENGTH)
+    message_text = _limit(message_text.strip(), MAX_MESSAGE_LENGTH)
     if not label or not message_text:
         return
     if any(existing_label == label or existing_text == message_text for existing_label, existing_text in suggestions):
         return
     suggestions.append((label, message_text))
+
+
+def _has_blocked_topic(text: str) -> bool:
+    return "날씨" in text
+
+
+def _meal_summary(meals: list[Meal]) -> str:
+    if not meals:
+        return "조회된 메뉴 없음"
+    lines = []
+    for meal in meals[:12]:
+        restaurant = meal.restaurant.name if meal.restaurant else "식당"
+        menu = ", ".join(meal.korean_name or []) or "메뉴 정보 없음"
+        price = f" / {meal.price}" if meal.price else ""
+        lines.append(f"- {restaurant} {meal.meal_type}: {menu}{price}")
+    return "\n".join(lines)
 
 
 def _ordered_unique(values: list[str]) -> list[str]:

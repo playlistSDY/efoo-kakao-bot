@@ -62,6 +62,7 @@ def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-
         meals,
         bool(debug_result["lookup"].get("meal_intent")),
         now,
+        answer,
     )
 
     return {
@@ -154,6 +155,7 @@ def create_chat_response(db: Session, kakao_user_id: str, utterance: str, raw_pa
         meals,
         bool(debug_result["lookup"].get("meal_intent")),
         now,
+        answer,
     )
 
     return build_kakao_response(answer, meals if presentation.attach_meal_cards else [], quick_replies)
