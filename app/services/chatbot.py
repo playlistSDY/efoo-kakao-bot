@@ -11,11 +11,11 @@ from typing_extensions import NotRequired, TypedDict
 
 from app.config import settings
 from app.domain.meal_intent import format_target_date_text, infer_meal_intent, infer_meal_types, infer_target_date
-from app.domain.meal_prompt import format_meals_for_prompt
 from app.entities import ChatSession, Meal, UserProfile
 from app.meal_cache import ensure_fresh_meals
 from app import repositories as repo
 from app.restaurant_info import format_open_status_context, format_restaurant_context
+from app.services.prompt_builder import format_meals_for_prompt
 from app.tools import CHAT_TOOLS
 
 
