@@ -15,7 +15,7 @@ from app.meal_cache import get_meal_cache_status
 from app.quick_replies import build_quick_replies
 from app.response_policy import choose_kakao_presentation
 from app.services.chatbot import meal_chat_agent
-from app.services.kakao_chat import build_callback_timeout_response
+from app.services.kakao_callback import build_callback_timeout_response
 from app.wait_messages import random_wait_message
 
 
