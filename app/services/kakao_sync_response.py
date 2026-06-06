@@ -9,9 +9,9 @@ from app import repositories as repo
 from app.config import settings
 from app.domain.meal_intent import format_target_date_text, infer_meal_intent, infer_meal_types, infer_target_date
 from app.entities import Meal
-from app.kakao_templates import build_kakao_response
-from app.quick_replies import build_quick_replies
-from app.response_policy import choose_kakao_presentation
+from app.services.kakao_templates import build_kakao_response
+from app.services.quick_replies import build_quick_replies
+from app.services.response_policy import choose_kakao_presentation
 
 
 def create_fast_sync_response(db: Session, kakao_user_id: str, utterance: str, raw_payload: dict) -> dict:

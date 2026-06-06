@@ -10,9 +10,9 @@ from app.config import settings
 from app.database import SessionLocal
 from app.domain.meal_intent import infer_target_date
 from app.services.chatbot import meal_chat_agent
-from app.kakao_templates import build_kakao_response
-from app.quick_replies import build_quick_replies
-from app.response_policy import choose_kakao_presentation
+from app.services.kakao_templates import build_kakao_response
+from app.services.quick_replies import build_quick_replies
+from app.services.response_policy import choose_kakao_presentation
 
 
 def create_chat_response(db: Session, kakao_user_id: str, utterance: str, raw_payload: dict) -> dict:

@@ -9,7 +9,7 @@ from app.database import get_db
 from app.schemas.kakao import KakaoRequest
 from app.services.kakao_callback import find_callback_url, send_kakao_callback_response
 from app.services.kakao_sync_response import create_fast_sync_response
-from app.wait_messages import random_wait_message
+from app.services.wait_messages import random_wait_message
 
 
 logger = logging.getLogger(__name__)

@@ -6,8 +6,8 @@ import random
 
 import requests
 
-from app.kakao_templates import build_kakao_response
 from app.services.kakao_chat import create_chat_response_in_new_session
+from app.services.kakao_templates import build_kakao_response
 
 
 logger = logging.getLogger(__name__)

@@ -10,13 +10,13 @@ from app import repositories as repo
 from app.config import settings
 from app.database import get_db
 from app.domain.meal_intent import infer_target_date
-from app.kakao_templates import build_kakao_response
 from app.meal_cache import get_meal_cache_status
-from app.quick_replies import build_quick_replies
-from app.response_policy import choose_kakao_presentation
 from app.services.chatbot import meal_chat_agent
 from app.services.kakao_callback import build_callback_timeout_response
-from app.wait_messages import random_wait_message
+from app.services.kakao_templates import build_kakao_response
+from app.services.quick_replies import build_quick_replies
+from app.services.response_policy import choose_kakao_presentation
+from app.services.wait_messages import random_wait_message
 
 
 router = APIRouter()
