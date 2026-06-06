@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 import re
-from typing import TypedDict
 from zoneinfo import ZoneInfo
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from sqlalchemy.orm import Session
+from typing_extensions import NotRequired, TypedDict
 
 from app.config import settings
 from app.entities import ChatSession, Meal, UserProfile
@@ -190,13 +190,34 @@ def format_target_date_text(target_date: date) -> str:
     return f"{target_date.year}-{target_date.month:02d}-{target_date.day:02d} {weekdays[target_date.weekday()]}"
 
 
-class AgentState(TypedDict, total=False):
+class AgentState(TypedDict):
     db: Session
     user: UserProfile
     session: ChatSession
     user_text: str
     now: datetime
     now_text: str
+    target_date_obj: NotRequired[date]
+    target_date: NotRequired[str]
+    target_date_text: NotRequired[str]
+    is_target_today: NotRequired[bool]
+    meal_intent: NotRequired[bool]
+    requested_meal_types: NotRequired[list[str] | None]
+    meal_types: NotRequired[list[str]]
+    meal_count: NotRequired[int]
+    meals: NotRequired[list[Meal]]
+    lookup: NotRequired[dict]
+    profile_text: NotRequired[str]
+    history_text: NotRequired[str]
+    restaurant_context: NotRequired[str]
+    open_status_context: NotRequired[str]
+    meal_context: NotRequired[str]
+    answer: NotRequired[str]
+    tool_calls: NotRequired[list[dict]]
+    agent_steps: NotRequired[list[str]]
+
+
+class AgentStateUpdate(TypedDict, total=False):
     target_date_obj: date
     target_date: str
     target_date_text: str
@@ -259,7 +280,7 @@ class MealChatAgent:
         graph.add_edge("generate", END)
         return graph.compile()
 
-    def _remember_user(self, state: AgentState) -> AgentState:
+    def _remember_user(self, state: AgentState) -> AgentStateUpdate:
         db = state["db"]
         user = state["user"]
         repo.update_profile_from_text(db, user, state["user_text"])
@@ -268,7 +289,7 @@ class MealChatAgent:
             "agent_steps": state.get("agent_steps", []) + ["remember_user"],
         }
 
-    def _resolve_lookup(self, state: AgentState) -> AgentState:
+    def _resolve_lookup(self, state: AgentState) -> AgentStateUpdate:
         db = state["db"]
         now = state["now"]
         user_text = state["user_text"]
@@ -305,7 +326,7 @@ class MealChatAgent:
             "agent_steps": state.get("agent_steps", []) + ["resolve_lookup"],
         }
 
-    def _load_context(self, state: AgentState) -> AgentState:
+    def _load_context(self, state: AgentState) -> AgentStateUpdate:
         recent = repo.get_recent_messages(state["db"], state["session"].id)
         return {
             "history_text": "\n".join(f"{m.role}: {m.content}" for m in recent),
@@ -314,17 +335,19 @@ class MealChatAgent:
             "agent_steps": state.get("agent_steps", []) + ["load_context"],
         }
 
-    def _generate(self, state: AgentState) -> AgentState:
+    def _generate(self, state: AgentState) -> AgentStateUpdate:
+        meal_context = state.get("meal_context", "조회된 학식 데이터가 없습니다.")
         if not settings.OPENAI_API_KEY:
-            state["answer"] = (
-                "아직 OPENAI_API_KEY가 설정되지 않아서 AI 추천은 잠시 쉬고 있어요.\n\n"
-                f"현재 조회된 학식 정보:\n{state['meal_context']}"
-            )
-            state["tool_calls"] = []
-            state["agent_steps"] = state.get("agent_steps", []) + ["generate"]
-            return state
+            return {
+                "answer": (
+                    "아직 OPENAI_API_KEY가 설정되지 않아서 AI 추천은 잠시 쉬고 있어요.\n\n"
+                    f"현재 조회된 학식 정보:\n{meal_context}"
+                ),
+                "tool_calls": [],
+                "agent_steps": state.get("agent_steps", []) + ["generate"],
+            }
 
-        llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL, temperature=0.4)
+        llm = ChatOpenAI(api_key=lambda: settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL, temperature=0.4)
         llm_with_tools = llm.bind_tools(CHAT_TOOLS)
         tool_map = {tool.name: tool for tool in CHAT_TOOLS}
         messages = [
@@ -370,11 +393,11 @@ class MealChatAgent:
                     f"학식/식당 관련 의도인지: {'예' if state.get('meal_intent') else '아니오'}\n"
                     f"조회 대상 식사: {', '.join(state.get('meal_types', [])) or '알 수 없음'}\n"
                     f"조회된 학식 데이터 개수: {state.get('meal_count', 0)}\n"
-                    f"사용자 기록: {state['profile_text']}\n"
-                    f"최근 대화:\n{state['history_text'] or '없음'}\n\n"
-                    f"식당 기본 정보:\n{state['restaurant_context']}\n\n"
-                    f"오늘 현재 시각 기준 운영 상태:\n{state['open_status_context']}\n\n"
-                    f"DB 학식 데이터:\n{state['meal_context']}\n\n"
+                    f"사용자 기록: {state.get('profile_text', '없음')}\n"
+                    f"최근 대화:\n{state.get('history_text') or '없음'}\n\n"
+                    f"식당 기본 정보:\n{state.get('restaurant_context', '없음')}\n\n"
+                    f"오늘 현재 시각 기준 운영 상태:\n{state.get('open_status_context', '없음')}\n\n"
+                    f"DB 학식 데이터:\n{meal_context}\n\n"
                     f"사용자 메시지: {state['user_text']}"
                 )
             ),
@@ -403,10 +426,11 @@ class MealChatAgent:
         if getattr(response, "tool_calls", None):
             response = llm_with_tools.invoke(messages)
 
-        state["answer"] = _non_empty_answer(str(response.content), bool(state.get("meal_intent")))
-        state["tool_calls"] = executed_tool_calls
-        state["agent_steps"] = state.get("agent_steps", []) + ["generate"]
-        return state
+        return {
+            "answer": _non_empty_answer(str(response.content), bool(state.get("meal_intent"))),
+            "tool_calls": executed_tool_calls,
+            "agent_steps": state.get("agent_steps", []) + ["generate"],
+        }
 
     def _profile_text(self, user: UserProfile) -> str:
         return (
