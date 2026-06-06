@@ -1,4 +1,5 @@
-from datetime import date, datetime
+from datetime import date as DateType, datetime
+from typing import Any
 
 from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -18,9 +19,9 @@ class Restaurant(Base):
     latitude: Mapped[str | None] = mapped_column(String(20))
     longitude: Mapped[str | None] = mapped_column(String(20))
     description: Mapped[str | None] = mapped_column(String(500))
-    open_times: Mapped[dict | None] = mapped_column(JSON)
+    open_times: Mapped[dict[str, str] | None] = mapped_column(JSON)
 
-    meals = relationship("Meal", back_populates="restaurant")
+    meals: Mapped[list["Meal"]] = relationship(back_populates="restaurant")
 
 
 class Meal(Base):
@@ -32,7 +33,7 @@ class Meal(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     restaurant_id: Mapped[int] = mapped_column(ForeignKey("cafeteria.id"), nullable=False)
-    date: Mapped[date] = mapped_column(Date, nullable=False)
+    date: Mapped[DateType] = mapped_column(Date, nullable=False)
     day_of_week: Mapped[str | None] = mapped_column(String(10))
     meal_type: Mapped[str] = mapped_column(String(10), nullable=False)
     korean_name: Mapped[list[str]] = mapped_column(JSON, nullable=False)
@@ -40,7 +41,7 @@ class Meal(Base):
     price: Mapped[str | None] = mapped_column(String(20))
     image_url: Mapped[str | None] = mapped_column(String(500))
 
-    restaurant = relationship("Restaurant", back_populates="meals")
+    restaurant: Mapped[Restaurant] = relationship(back_populates="meals")
 
 
 class MealFetchLog(Base):
@@ -49,7 +50,7 @@ class MealFetchLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     restaurant_id: Mapped[int] = mapped_column(ForeignKey("cafeteria.id"), nullable=False)
-    date: Mapped[date] = mapped_column(Date, nullable=False)
+    date: Mapped[DateType] = mapped_column(Date, nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="success")
     message: Mapped[str | None] = mapped_column(String(500))
@@ -68,7 +69,7 @@ class UserProfile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    sessions = relationship("ChatSession", back_populates="user")
+    sessions: Mapped[list["ChatSession"]] = relationship(back_populates="user")
 
 
 class ChatSession(Base):
@@ -80,8 +81,8 @@ class ChatSession(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    user = relationship("UserProfile", back_populates="sessions")
-    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
+    user: Mapped[UserProfile] = relationship(back_populates="sessions")
+    messages: Mapped[list["ChatMessage"]] = relationship(back_populates="session", cascade="all, delete-orphan")
 
 
 class ChatMessage(Base):
@@ -92,13 +93,13 @@ class ChatMessage(Base):
     session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id"), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    raw_payload: Mapped[dict | None] = mapped_column(JSON)
+    raw_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    session = relationship("ChatSession", back_populates="messages")
+    session: Mapped[ChatSession] = relationship(back_populates="messages")
 
 
 # Backward-compatible placeholders used by the legacy monthly fetch script.
-Rating = None
-Keyword = None
-MealKeywordReview = None
+Rating: Any = None
+Keyword: Any = None
+MealKeywordReview: Any = None
