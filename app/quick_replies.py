@@ -31,9 +31,10 @@ def build_quick_replies(
     if not meal_intent:
         return []
 
-    llm_replies = _build_llm_quick_replies(utterance, target_date, meals, now, answer)
-    if llm_replies:
-        return llm_replies
+    if settings.ENABLE_LLM_QUICK_REPLIES:
+        llm_replies = _build_llm_quick_replies(utterance, target_date, meals, now, answer)
+        if llm_replies:
+            return llm_replies
 
     return _fallback_quick_replies(utterance, target_date, meals, now)
 

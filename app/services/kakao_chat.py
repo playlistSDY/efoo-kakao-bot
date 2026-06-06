@@ -10,9 +10,10 @@ import requests
 from sqlalchemy.orm import Session
 
 from app import repositories as repo
-from app.chatbot import infer_target_date, meal_chat_agent
 from app.config import settings
 from app.database import SessionLocal
+from app.domain.meal_intent import infer_target_date
+from app.chatbot import meal_chat_agent
 from app.kakao_templates import build_kakao_response
 from app.quick_replies import build_quick_replies
 from app.response_policy import choose_kakao_presentation
