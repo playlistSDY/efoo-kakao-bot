@@ -18,6 +18,7 @@ from app import repositories as repo
 from app.domain.restaurants import format_open_status_context, format_restaurant_context
 from app.services.prompt_builder import build_system_prompt, build_user_prompt, format_meals_for_prompt
 from app.services.chat_tools import CHAT_TOOLS
+from app.services.recommendation_intent import extract_recommendation_intent, format_recommendation_intent
 
 
 class AgentState(TypedDict):
@@ -42,6 +43,7 @@ class AgentState(TypedDict):
     restaurant_context: NotRequired[str]
     open_status_context: NotRequired[str]
     meal_context: NotRequired[str]
+    recommendation_intent_text: NotRequired[str]
     recommendation_ranking: NotRequired[str]
     answer: NotRequired[str]
     tool_calls: NotRequired[list[dict]]
@@ -64,6 +66,7 @@ class AgentStateUpdate(TypedDict, total=False):
     restaurant_context: str
     open_status_context: str
     meal_context: str
+    recommendation_intent_text: str
     recommendation_ranking: str
     answer: str
     tool_calls: list[dict]
@@ -130,10 +133,13 @@ class MealChatAgent:
         meal_intent = infer_meal_intent(user_text)
         meals = []
         scored_meals = []
+        recommendation_intent_text = "추출된 추천 조건 없음"
         if meal_intent:
             ensure_fresh_meals(db, target_date, now)
             meals = repo.get_meals_flexible(db, target_date=target_date, meal_types=meal_types)
-            scored_meals = score_meals(meals, state["user"], user_text, now, target_date)
+            recommendation_intent = extract_recommendation_intent(user_text)
+            recommendation_intent_text = format_recommendation_intent(recommendation_intent)
+            scored_meals = score_meals(meals, state["user"], user_text, now, target_date, recommendation_intent)
             meals = [item.meal for item in scored_meals]
         lookup = {
             "target_date": str(target_date),
@@ -160,6 +166,11 @@ class MealChatAgent:
             ),
             "recommendation_ranking": (
                 format_recommendation_ranking(scored_meals)
+                if meal_intent
+                else "이번 사용자 메시지는 학식/식당/메뉴 질문으로 판단되지 않았습니다."
+            ),
+            "recommendation_intent_text": (
+                recommendation_intent_text
                 if meal_intent
                 else "이번 사용자 메시지는 학식/식당/메뉴 질문으로 판단되지 않았습니다."
             ),

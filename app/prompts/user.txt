@@ -17,6 +17,9 @@
 DB 학식 데이터:
 {meal_context}
 
+추출된 추천 조건:
+{recommendation_intent_text}
+
 점수 기반 추천 랭킹:
 {recommendation_ranking}
 

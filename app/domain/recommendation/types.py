@@ -9,6 +9,7 @@ from app.models import Meal
 class ScoreBreakdown:
     base: int = 50
     preference: int = 0
+    intent: int = 0
     dislike: int = 0
     allergy: int = 0
     budget: int = 0
@@ -21,6 +22,7 @@ class ScoreBreakdown:
         return (
             self.base
             + self.preference
+            + self.intent
             + self.dislike
             + self.allergy
             + self.budget
@@ -37,3 +39,27 @@ class ScoredMeal:
     reasons: list[str]
     warnings: list[str]
     breakdown: ScoreBreakdown
+
+
+@dataclass(frozen=True)
+class RecommendationIntent:
+    desired_foods: list[str]
+    desired_cuisines: list[str]
+    desired_traits: list[str]
+    avoid_foods: list[str]
+    avoid_traits: list[str]
+    matching_keywords: list[str]
+    budget_limit: int | None = None
+
+    def is_empty(self) -> bool:
+        return not any(
+            [
+                self.desired_foods,
+                self.desired_cuisines,
+                self.desired_traits,
+                self.avoid_foods,
+                self.avoid_traits,
+                self.matching_keywords,
+                self.budget_limit,
+            ]
+        )

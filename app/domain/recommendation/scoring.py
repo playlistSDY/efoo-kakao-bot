@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 import re
 
-from app.domain.recommendation.types import ScoreBreakdown, ScoredMeal
+from app.domain.recommendation.types import RecommendationIntent, ScoreBreakdown, ScoredMeal
 from app.domain.restaurants import DEFAULT_RESTAURANT_INFO, meal_type_status
 from app.models import Meal, UserProfile
 
@@ -14,8 +14,9 @@ def score_meals(
     user_text: str,
     now: datetime,
     target_date: date,
+    recommendation_intent: RecommendationIntent | None = None,
 ) -> list[ScoredMeal]:
-    scored = [_score_meal(meal, user, user_text, now, target_date) for meal in meals]
+    scored = [_score_meal(meal, user, user_text, now, target_date, recommendation_intent) for meal in meals]
     return sorted(scored, key=lambda item: (item.score, _menu_text(item.meal)), reverse=True)
 
 
@@ -25,8 +26,9 @@ def sort_meals_by_score(
     user_text: str,
     now: datetime,
     target_date: date,
+    recommendation_intent: RecommendationIntent | None = None,
 ) -> list[Meal]:
-    return [item.meal for item in score_meals(meals, user, user_text, now, target_date)]
+    return [item.meal for item in score_meals(meals, user, user_text, now, target_date, recommendation_intent)]
 
 
 def format_recommendation_ranking(scored_meals: list[ScoredMeal], limit: int = 3) -> str:
@@ -48,7 +50,14 @@ def format_recommendation_ranking(scored_meals: list[ScoredMeal], limit: int = 3
     return "\n".join(lines).strip()
 
 
-def _score_meal(meal: Meal, user: UserProfile, user_text: str, now: datetime, target_date: date) -> ScoredMeal:
+def _score_meal(
+    meal: Meal,
+    user: UserProfile,
+    user_text: str,
+    now: datetime,
+    target_date: date,
+    recommendation_intent: RecommendationIntent | None,
+) -> ScoredMeal:
     reasons: list[str] = []
     warnings: list[str] = []
     text = _normalized_text(" ".join(meal.korean_name or []) + " " + " ".join(meal.tags or []))
@@ -57,6 +66,7 @@ def _score_meal(meal: Meal, user: UserProfile, user_text: str, now: datetime, ta
     if preference:
         reasons.append("선호 키워드와 맞음")
 
+    intent = _intent_score(text, recommendation_intent, reasons, warnings)
     dislike = -_keyword_score(text, user.dislikes or [], 20, 35)
     if dislike:
         warnings.append("비선호 키워드가 포함될 수 있음")
@@ -66,7 +76,7 @@ def _score_meal(meal: Meal, user: UserProfile, user_text: str, now: datetime, ta
     if allergy_matches:
         warnings.append(f"알러지 키워드 확인 필요({', '.join(allergy_matches[:3])})")
 
-    budget_limit = user.budget_limit or _parse_budget_from_text(user_text)
+    budget_limit = user.budget_limit or (recommendation_intent.budget_limit if recommendation_intent else None) or _parse_budget_from_text(user_text)
     budget = _budget_score(_parse_price(meal.price), budget_limit, reasons, warnings)
     restaurant = _restaurant_score(meal, user_text, reasons)
     availability = _availability_score(meal, now, target_date, reasons, warnings)
@@ -74,6 +84,7 @@ def _score_meal(meal: Meal, user: UserProfile, user_text: str, now: datetime, ta
 
     breakdown = ScoreBreakdown(
         preference=preference,
+        intent=intent,
         dislike=dislike,
         allergy=allergy,
         budget=budget,
@@ -87,6 +98,44 @@ def _score_meal(meal: Meal, user: UserProfile, user_text: str, now: datetime, ta
 def _keyword_score(text: str, keywords: list[str], per_match: int, max_score: int) -> int:
     matches = _matched_keywords(text, keywords)
     return min(len(matches) * per_match, max_score)
+
+
+def _intent_score(
+    text: str,
+    recommendation_intent: RecommendationIntent | None,
+    reasons: list[str],
+    warnings: list[str],
+) -> int:
+    if not recommendation_intent or recommendation_intent.is_empty():
+        return 0
+
+    score = 0
+    desired_food_matches = _matched_keywords(text, recommendation_intent.desired_foods + recommendation_intent.matching_keywords)
+    if desired_food_matches:
+        score += min(len(desired_food_matches) * 18, 45)
+        reasons.append(f"요청한 음식 조건과 맞음({', '.join(desired_food_matches[:3])})")
+
+    cuisine_matches = _matched_keywords(text, recommendation_intent.desired_cuisines)
+    if cuisine_matches:
+        score += min(len(cuisine_matches) * 12, 24)
+        reasons.append(f"요청한 음식 종류와 가까움({', '.join(cuisine_matches[:2])})")
+
+    trait_matches = _matched_keywords(text, recommendation_intent.desired_traits)
+    if trait_matches:
+        score += min(len(trait_matches) * 8, 24)
+        reasons.append(f"원하는 느낌과 맞음({', '.join(trait_matches[:3])})")
+
+    avoid_food_matches = _matched_keywords(text, recommendation_intent.avoid_foods)
+    if avoid_food_matches:
+        score -= min(len(avoid_food_matches) * 25, 45)
+        warnings.append(f"피하고 싶은 음식일 수 있음({', '.join(avoid_food_matches[:3])})")
+
+    avoid_trait_matches = _matched_keywords(text, recommendation_intent.avoid_traits)
+    if avoid_trait_matches:
+        score -= min(len(avoid_trait_matches) * 18, 35)
+        warnings.append(f"피하고 싶은 특성이 있을 수 있음({', '.join(avoid_trait_matches[:3])})")
+
+    return score
 
 
 def _matched_keywords(text: str, keywords: list[str]) -> list[str]:
