@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app import repositories as repo
 from app.config import settings
 from app.domain.meal_intent import format_target_date_text, infer_meal_intent, infer_meal_types, infer_target_date
+from app.domain.recommendation import ScoredMeal, score_meals
 from app.models import Meal
 from app.services.kakao_templates import build_kakao_response
 from app.services.quick_replies import build_quick_replies
@@ -17,6 +18,7 @@ from app.services.response_policy import choose_kakao_presentation
 def create_fast_sync_response(db: Session, kakao_user_id: str, utterance: str, raw_payload: dict) -> dict:
     now = datetime.now(ZoneInfo(settings.APP_TIMEZONE))
     user = repo.get_or_create_user(db, kakao_user_id)
+    user = repo.update_profile_from_text(db, user, utterance)
     session = repo.get_or_create_active_session(db, user)
     repo.add_message(db, session.id, "user", utterance, raw_payload)
 
@@ -24,12 +26,14 @@ def create_fast_sync_response(db: Session, kakao_user_id: str, utterance: str, r
     meal_types = infer_meal_types(utterance, now)
     meal_intent = infer_meal_intent(utterance)
     meals = repo.get_meals_flexible(db, target_date=target_date, meal_types=meal_types) if meal_intent else []
-    answer = _build_fast_answer(utterance, target_date, meal_types, meal_intent, meals)
+    scored_meals = score_meals(meals, user, utterance, now, target_date) if meal_intent else []
+    ranked_meals = [item.meal for item in scored_meals]
+    answer = _build_fast_answer(utterance, target_date, meal_types, meal_intent, ranked_meals, scored_meals)
     repo.add_message(db, session.id, "assistant", answer, {"source": "fast-sync"})
 
-    presentation = choose_kakao_presentation(utterance, target_date, meals)
-    quick_replies = build_quick_replies(utterance, target_date, meals, meal_intent, now, answer)
-    return build_kakao_response(answer, meals if presentation.attach_meal_cards else [], quick_replies)
+    presentation = choose_kakao_presentation(utterance, target_date, ranked_meals)
+    quick_replies = build_quick_replies(utterance, target_date, ranked_meals, meal_intent, now, answer)
+    return build_kakao_response(answer, ranked_meals if presentation.attach_meal_cards else [], quick_replies)
 
 
 def _build_fast_answer(
@@ -38,6 +42,7 @@ def _build_fast_answer(
     meal_types: list[str] | None,
     meal_intent: bool,
     meals: list[Meal],
+    scored_meals: list[ScoredMeal],
 ) -> str:
     if not meal_intent:
         return (
@@ -66,6 +71,25 @@ def _build_fast_answer(
         f"{meal_type_text} 메뉴예요.",
         "",
     ]
+    if scored_meals:
+        top = scored_meals[0]
+        top_meal = top.meal
+        restaurant = top_meal.restaurant.name if top_meal.restaurant else "식당"
+        menu = _compact_menu(top_meal.korean_name or [], max_items=3)
+        lines.extend(
+            [
+                f"추천 1순위는",
+                f"{restaurant} {top_meal.meal_type}",
+                f"{menu}예요.",
+                f"점수는 {top.score}점이에요.",
+            ]
+        )
+        if top.reasons:
+            lines.append(f"이유: {top.reasons[0]}")
+        if top.warnings:
+            lines.append(f"주의: {top.warnings[0]}")
+        lines.append("")
+
     for restaurant_name, restaurant_meals in grouped[:4]:
         lines.append(restaurant_name)
         for index, meal in enumerate(restaurant_meals[:2], start=1):

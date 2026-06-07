@@ -43,14 +43,39 @@ def _extract_after_keywords(text: str, keywords: list[str]) -> list[str]:
     for keyword in keywords:
         if keyword not in text:
             continue
-        tail = text.split(keyword, 1)[1]
-        tail = re.sub(r"(있어|있음|야|입니다|이에요|예요|해|해요|함|이야)", " ", tail)
-        return [item.strip(" ,./") for item in re.split(r"[,/와과랑및 ]+", tail) if len(item.strip(" ,./")) >= 2][:6]
+        head, tail = text.split(keyword, 1)
+        candidates = []
+        candidates.extend(_keyword_items_from_text(tail))
+        candidates.extend(reversed(_keyword_items_from_text(head)))
+        return _dedupe_keywords(candidates)[:6]
     return []
 
 
+def _keyword_items_from_text(text: str) -> list[str]:
+    text = re.sub(r"(있어|있음|야|입니다|이에요|예요|해|해요|함|이야|추천해줘|추천|메뉴|점심|저녁|아침|오늘|내일)", " ", text)
+    items = []
+    for item in re.split(r"[,/와과랑및 ]+", text):
+        item = item.strip(" ,./")
+        if len(item) < 2:
+            continue
+        if re.search(r"\d", item):
+            continue
+        if item in {"학식", "식당", "메뉴", "추천", "점심", "저녁", "아침", "오늘", "내일"}:
+            continue
+        items.append(item)
+    return items
+
+
+def _dedupe_keywords(items: list[str]) -> list[str]:
+    deduped = []
+    for item in items:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
 def _extract_budget(text: str) -> int | None:
-    match = re.search(r"(\d{1,2})\s*(천원|만원|원)", text)
+    match = re.search(r"(\d{1,6})\s*(천원|만원|원)", text)
     if not match:
         return None
     amount = int(match.group(1))

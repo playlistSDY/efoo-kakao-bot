@@ -25,6 +25,7 @@ def build_user_prompt(state: Mapping[str, Any], meal_context: str) -> str:
         restaurant_context=state.get("restaurant_context", "없음"),
         open_status_context=state.get("open_status_context", "없음"),
         meal_context=meal_context,
+        recommendation_ranking=state.get("recommendation_ranking", "추천 랭킹 없음"),
         user_text=state["user_text"],
     )
 

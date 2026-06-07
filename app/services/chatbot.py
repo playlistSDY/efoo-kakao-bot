@@ -11,6 +11,7 @@ from typing_extensions import NotRequired, TypedDict
 
 from app.config import settings
 from app.domain.meal_intent import format_target_date_text, infer_meal_intent, infer_meal_types, infer_target_date
+from app.domain.recommendation import format_recommendation_ranking, score_meals
 from app.models import ChatSession, Meal, UserProfile
 from app.services.meals.cache import ensure_fresh_meals
 from app import repositories as repo
@@ -41,6 +42,7 @@ class AgentState(TypedDict):
     restaurant_context: NotRequired[str]
     open_status_context: NotRequired[str]
     meal_context: NotRequired[str]
+    recommendation_ranking: NotRequired[str]
     answer: NotRequired[str]
     tool_calls: NotRequired[list[dict]]
     agent_steps: NotRequired[list[str]]
@@ -62,6 +64,7 @@ class AgentStateUpdate(TypedDict, total=False):
     restaurant_context: str
     open_status_context: str
     meal_context: str
+    recommendation_ranking: str
     answer: str
     tool_calls: list[dict]
     agent_steps: list[str]
@@ -126,9 +129,12 @@ class MealChatAgent:
         meal_types = infer_meal_types(user_text, now)
         meal_intent = infer_meal_intent(user_text)
         meals = []
+        scored_meals = []
         if meal_intent:
             ensure_fresh_meals(db, target_date, now)
             meals = repo.get_meals_flexible(db, target_date=target_date, meal_types=meal_types)
+            scored_meals = score_meals(meals, state["user"], user_text, now, target_date)
+            meals = [item.meal for item in scored_meals]
         lookup = {
             "target_date": str(target_date),
             "meal_types": meal_types,
@@ -149,6 +155,11 @@ class MealChatAgent:
             "lookup": lookup,
             "meal_context": (
                 format_meals_for_prompt(meals, now)
+                if meal_intent
+                else "이번 사용자 메시지는 학식/식당/메뉴 질문으로 판단되지 않았습니다."
+            ),
+            "recommendation_ranking": (
+                format_recommendation_ranking(scored_meals)
                 if meal_intent
                 else "이번 사용자 메시지는 학식/식당/메뉴 질문으로 판단되지 않았습니다."
             ),
