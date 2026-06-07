@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.db import get_db
 from app.schemas.kakao import KakaoRequest
 from app.services.kakao_callback import find_callback_url, send_kakao_callback_response
 from app.services.kakao_sync_response import create_fast_sync_response

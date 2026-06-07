@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.entities import Meal
+from app.models import Meal
 
 
 SIMPLE_TEXT_LIMIT = 1000

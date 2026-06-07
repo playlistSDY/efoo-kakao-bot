@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api import health, kakao, test
-from app.database import init_db
+from app.db import init_db
 
 
 @asynccontextmanager

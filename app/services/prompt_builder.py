@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Mapping
 
-from app.entities import Meal
-from app.restaurant_info import meal_type_status
+from app.models import Meal
+from app.domain.restaurants import meal_type_status
 
 
 def build_system_prompt() -> str:

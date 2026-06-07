@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 
 from app import repositories as repo
 from app.config import settings
-from app.entities import MealFetchLog
-from app.fetch_locks import meal_fetch_lock
-from app.meal_fetcher import meal_fetcher
+from app.models import MealFetchLog
+from app.services.meals.fetch_locks import meal_fetch_lock
+from app.services.meals.fetcher import meal_fetcher
 
 
 MEAL_CACHE_TTL = timedelta(minutes=30)

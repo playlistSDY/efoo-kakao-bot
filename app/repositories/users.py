@@ -5,7 +5,7 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.entities import UserProfile
+from app.models import UserProfile
 
 
 def get_or_create_user(db: Session, kakao_user_id: str) -> UserProfile:

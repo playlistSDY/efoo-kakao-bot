@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 
 from app import repositories as repo
 from app.config import settings
-from app.database import get_db
+from app.db import get_db
 from app.domain.meal_intent import infer_target_date
-from app.meal_cache import get_meal_cache_status
+from app.services.meals.cache import get_meal_cache_status
 from app.services.chatbot import meal_chat_agent
 from app.services.kakao_callback import build_callback_timeout_response
 from app.services.kakao_templates import build_kakao_response

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from app.entities import Meal
+from app.models import Meal
 
 
 @dataclass(frozen=True)

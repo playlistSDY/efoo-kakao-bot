@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.entities import ChatMessage, ChatSession, UserProfile
+from app.models import ChatMessage, ChatSession, UserProfile
 
 
 def get_or_create_active_session(db: Session, user: UserProfile) -> ChatSession:

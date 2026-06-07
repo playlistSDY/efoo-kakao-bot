@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app import repositories as repo
 from app.config import settings
-from app.database import SessionLocal
+from app.db import SessionLocal
 from app.domain.meal_intent import infer_target_date
 from app.services.chatbot import meal_chat_agent
 from app.services.kakao_templates import build_kakao_response

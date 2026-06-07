@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
-from app.restaurant_info import DEFAULT_RESTAURANT_INFO
+from app.domain.restaurants import DEFAULT_RESTAURANT_INFO
 
 
 load_dotenv()

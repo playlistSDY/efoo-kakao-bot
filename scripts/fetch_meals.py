@@ -21,11 +21,11 @@ import logging
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.database import SessionLocal
-from app.meal_fetcher import HTMLParser, MealService
+from app.db import SessionLocal
+from app.services.meals.fetcher import HTMLParser, MealService
 from app.config import settings
 from app import repositories as crud_meal
-from app.entities import Meal, Restaurant, Rating, Keyword, MealKeywordReview
+from app.models import Meal, Restaurant, Rating, Keyword, MealKeywordReview
 
 # 로깅 설정
 logging.basicConfig(

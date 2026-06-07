@@ -3,8 +3,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.entities import Restaurant
-from app.restaurant_info import get_restaurant_info
+from app.models import Restaurant
+from app.domain.restaurants import get_restaurant_info
 
 
 def get_all_restaurants(db: Session) -> list[Restaurant]:

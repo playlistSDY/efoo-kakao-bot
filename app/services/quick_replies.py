@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.config import settings
-from app.entities import Meal
+from app.models import Meal
 
 
 MAX_QUICK_REPLIES = 5

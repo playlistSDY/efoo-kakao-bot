@@ -6,8 +6,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.config import settings
-from app.database import SessionLocal
-from app.meal_fetcher import meal_fetcher
+from app.db import SessionLocal
+from app.services.meals.fetcher import meal_fetcher
 
 
 logger = logging.getLogger(__name__)

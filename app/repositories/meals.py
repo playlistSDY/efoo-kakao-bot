@@ -5,7 +5,7 @@ from datetime import date
 from sqlalchemy import delete, distinct, select
 from sqlalchemy.orm import Session
 
-from app.entities import Meal, Restaurant
+from app.models import Meal, Restaurant
 from app.repositories.restaurants import get_restaurant_by_code
 
 
