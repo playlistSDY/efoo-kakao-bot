@@ -19,8 +19,7 @@ router = APIRouter()
 @router.post("/kakao/callback")
 def kakao_callback(payload: KakaoRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user_request = payload.userRequest or {}
-    user_info = user_request.get("user") or {}
-    kakao_user_id = str(user_info.get("id") or user_info.get("properties", {}).get("plusfriendUserKey") or "anonymous")
+    kakao_user_id = extract_kakao_user_id(user_request)
     utterance = str(user_request.get("utterance") or "").strip()
     raw_payload = payload.model_dump()
     callback_url = find_callback_url(raw_payload)
@@ -49,3 +48,8 @@ def kakao_callback(payload: KakaoRequest, background_tasks: BackgroundTasks, db:
         }
 
     return create_fast_sync_response(db, kakao_user_id, utterance, raw_payload)
+
+
+def extract_kakao_user_id(user_request: dict) -> str:
+    user_info = user_request.get("user") or {}
+    return str(user_info.get("id") or user_info.get("properties", {}).get("plusfriendUserKey") or "anonymous")
