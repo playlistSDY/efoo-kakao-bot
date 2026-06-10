@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date, datetime, timedelta
+from typing import Any, Mapping
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.config import settings
-from app.entities import Meal
+from app.models import Meal
 
 
 MAX_QUICK_REPLIES = 5
@@ -16,6 +17,7 @@ MAX_LABEL_LENGTH = 14
 MAX_LABEL_BYTES = 14
 MAX_MESSAGE_LENGTH = 100
 logger = logging.getLogger(__name__)
+QuickReply = dict[str, str]
 
 
 def build_quick_replies(
@@ -25,13 +27,14 @@ def build_quick_replies(
     meal_intent: bool,
     now: datetime,
     answer: str = "",
-) -> list[dict]:
+) -> list[QuickReply]:
     if not meal_intent:
         return []
 
-    llm_replies = _build_llm_quick_replies(utterance, target_date, meals, now, answer)
-    if llm_replies:
-        return llm_replies
+    if settings.ENABLE_LLM_QUICK_REPLIES:
+        llm_replies = _build_llm_quick_replies(utterance, target_date, meals, now, answer)
+        if llm_replies:
+            return llm_replies
 
     return _fallback_quick_replies(utterance, target_date, meals, now)
 
@@ -42,12 +45,12 @@ def _build_llm_quick_replies(
     meals: list[Meal],
     now: datetime,
     answer: str,
-) -> list[dict]:
+) -> list[QuickReply]:
     if not settings.OPENAI_API_KEY:
         return []
 
     try:
-        llm = ChatOpenAI(api_key=settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL, temperature=0.2)
+        llm = ChatOpenAI(api_key=lambda: settings.OPENAI_API_KEY, model=settings.OPENAI_MODEL, temperature=0.2)
         response = llm.invoke(
             [
                 SystemMessage(
@@ -76,13 +79,14 @@ def _build_llm_quick_replies(
                 ),
             ]
         )
-        return _sanitize_quick_replies(_parse_llm_payload(str(response.content)))
+        content = response.content if isinstance(response.content, str) else json.dumps(response.content, ensure_ascii=False)
+        return _sanitize_quick_replies(_parse_llm_payload(content))
     except Exception:
         logger.exception("LLM quickReplies 생성 실패, 규칙 기반 fallback 사용")
         return []
 
 
-def _fallback_quick_replies(utterance: str, target_date: date, meals: list[Meal], now: datetime) -> list[dict]:
+def _fallback_quick_replies(utterance: str, target_date: date, meals: list[Meal], now: datetime) -> list[QuickReply]:
     suggestions: list[tuple[str, str]] = []
     date_text = _relative_date_text(target_date, now.date())
 
@@ -108,14 +112,14 @@ def _fallback_quick_replies(utterance: str, target_date: date, meals: list[Meal]
     return _format_quick_replies(suggestions)
 
 
-def _parse_llm_payload(content: str) -> list[dict]:
+def _parse_llm_payload(content: str) -> list[Mapping[str, Any]]:
     normalized = content.strip()
     if normalized.startswith("```"):
         normalized = normalized.strip("`").strip()
         if normalized.startswith("json"):
             normalized = normalized[4:].strip()
 
-    payload = json.loads(normalized)
+    payload: Any = json.loads(normalized)
     if isinstance(payload, dict):
         payload = payload.get("quick_replies") or payload.get("quickReplies") or payload.get("items") or []
     if not isinstance(payload, list):
@@ -123,7 +127,7 @@ def _parse_llm_payload(content: str) -> list[dict]:
     return [item for item in payload if isinstance(item, dict)]
 
 
-def _sanitize_quick_replies(items: list[dict]) -> list[dict]:
+def _sanitize_quick_replies(items: list[Mapping[str, Any]]) -> list[QuickReply]:
     suggestions: list[tuple[str, str]] = []
     for item in items:
         label = str(item.get("label") or "").strip()
@@ -134,7 +138,7 @@ def _sanitize_quick_replies(items: list[dict]) -> list[dict]:
     return _format_quick_replies(suggestions)
 
 
-def _format_quick_replies(suggestions: list[tuple[str, str]]) -> list[dict]:
+def _format_quick_replies(suggestions: list[tuple[str, str]]) -> list[QuickReply]:
     return [
         {
             "label": label,

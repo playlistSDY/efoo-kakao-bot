@@ -14,8 +14,8 @@ from sqlalchemy.orm import Session
 from urllib3 import poolmanager
 
 from app.config import settings
-from app.entities import Meal, MealFetchLog, Restaurant
-from app.restaurant_info import get_restaurant_info
+from app.models import Meal, MealFetchLog, Restaurant
+from app.domain.restaurants import get_restaurant_info
 
 logger = logging.getLogger(__name__)
 

@@ -4,8 +4,8 @@ import sys
 project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 
-from app.database import SessionLocal, init_db
-from app.meal_fetcher import meal_fetcher
+from app.db import SessionLocal, init_db
+from app.services.meals.fetcher import meal_fetcher
 
 
 def main():

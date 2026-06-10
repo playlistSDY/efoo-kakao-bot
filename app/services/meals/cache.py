@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import logging
 
 from sqlalchemy import select
@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 
 from app import repositories as repo
 from app.config import settings
-from app.entities import MealFetchLog
-from app.fetch_locks import meal_fetch_lock
-from app.meal_fetcher import meal_fetcher
+from app.models import MealFetchLog
+from app.services.meals.fetch_locks import meal_fetch_lock
+from app.services.meals.fetcher import meal_fetcher
 
 
 MEAL_CACHE_TTL = timedelta(minutes=30)
@@ -104,7 +104,7 @@ def get_meal_cache_status(db: Session, target_date: date, now: datetime) -> dict
 def _normalize_datetime(value: datetime, now: datetime) -> datetime:
     if value.tzinfo is None and now.tzinfo is not None:
         local_assumed = value.replace(tzinfo=now.tzinfo)
-        utc_assumed = value.replace(tzinfo=UTC).astimezone(now.tzinfo)
+        utc_assumed = value.replace(tzinfo=timezone.utc).astimezone(now.tzinfo)
         local_age = abs((now - local_assumed).total_seconds())
         utc_age = abs((now - utc_assumed).total_seconds())
         if utc_age < local_age:

@@ -11,6 +11,36 @@ LangChain/LangGraph와 OpenAI API를 사용하는 학식 안내 및 추천용 �
 - 챗봇이 필요할 때 현재 날짜/시간 도구 호출
 - LangGraph 기반 응답 플로우와 OpenAI Chat API 사용
 
+## 프로젝트 구조
+
+주요 애플리케이션 코드는 책임별 패키지로 분리되어 있습니다.
+
+```text
+app/
+  main.py                 # FastAPI 앱 생성 및 라우터 등록
+  config.py               # 환경변수 기반 설정
+  api/                    # FastAPI 라우터
+  db/                     # SQLAlchemy Base, engine, session, DB 초기화
+  models/                 # SQLAlchemy ORM 모델
+  repositories/           # DB 조회/저장 함수
+  domain/                 # 날짜/식사 의도, 식당 기본 정보 등 도메인 규칙
+  schemas/                # 요청/응답 Pydantic 스키마
+  services/               # 챗봇, 카카오 응답, 식단 수집/캐시 등 유스케이스
+  prompts/                # OpenAI 시스템/사용자 프롬프트 텍스트 템플릿
+scripts/                  # 수동 식단 수집 및 DB 보조 스크립트
+```
+
+아키텍처 리팩토링 후 루트 `app/`에는 앱 진입점과 설정만 두고, 구현 세부사항은 다음처럼 나누어 관리합니다.
+
+- DB 연결과 세션 관리는 `app/db/`에서 담당합니다.
+- ORM 모델은 `app/models/`에서 식당, 식단, 사용자, 채팅 모델로 분리합니다.
+- 식단 수집, 30분 캐시, 수집 lock, 스케줄러는 `app/services/meals/`에 있습니다.
+- 카카오 응답 템플릿, 빠른 동기 응답, Callback API 전송은 `app/services/`의 카카오 관련 모듈에서 처리합니다.
+- 학식 날짜/식사 시간 의도 추론은 `app/domain/meal_intent.py`에 있습니다.
+- 식당 위치, 줄임말, 운영시간 같은 정적 도메인 정보는 `app/domain/restaurants/`에 있습니다.
+- LangChain tool은 `app/services/chat_tools/`에 있습니다.
+- OpenAI 프롬프트 본문은 Python 코드가 아니라 `app/prompts/system.txt`, `app/prompts/user.txt`에 있습니다.
+
 ## Docker Compose 실행
 
 ```bash
@@ -54,7 +84,7 @@ POST /kakao/callback
 AI 응답은 카카오 Callback API를 지원합니다.
 
 - 카카오 요청의 `userRequest.callbackUrl`이 있으면 서버는 5초 안에 `{"version":"2.0","useCallback":true}`를 먼저 반환합니다.
-- 이때 `data.text`에는 `app/wait_messages.py`의 대기 문구 중 하나를 랜덤으로 담아 보냅니다.
+- 이때 `data.text`에는 `app/services/wait_messages.py`의 대기 문구 중 하나를 랜덤으로 담아 보냅니다.
 - 실제 OpenAI 응답, 메뉴 카드, 캐러셀은 백그라운드에서 `callbackUrl`로 POST 전송합니다.
 - `callbackUrl`이 없는 테스트 요청은 기존처럼 동기 응답을 바로 반환합니다.
 
@@ -77,11 +107,20 @@ HANYANG_RESTAURANTS=re11:교직원식당,re12:학생식당,re13:창의인재원�
 
 ## 챗봇 도구
 
-`app/tools.py`에 LangChain tool이 정의되어 있습니다.
+`app/services/chat_tools/tools.py`에 LangChain tool이 정의되어 있습니다.
 
 - `get_current_datetime`: `Asia/Seoul` 기준 현재 날짜, 요일, 시간 조회
 
 사용자가 "오늘 몇 시야?", "지금 몇 시야?"처럼 물으면 OpenAI 모델이 필요한 도구를 선택해 호출합니다.
+
+## 프롬프트 관리
+
+OpenAI로 전달하는 긴 프롬프트 본문은 `app/prompts/`의 텍스트 파일로 분리되어 있습니다.
+
+- `app/prompts/system.txt`: 챗봇 역할, 답변 원칙, 카카오톡 출력 형식
+- `app/prompts/user.txt`: 현재 시각, 조회 날짜, 식사 종류, 사용자 기록, 대화 기록, DB 학식 데이터 템플릿
+
+`app/services/prompt_loader.py`가 템플릿 파일을 읽고, `app/services/prompt_builder.py`가 LangGraph state와 DB 조회 결과를 템플릿 변수로 채웁니다.
 
 ## 로컬 실행
 

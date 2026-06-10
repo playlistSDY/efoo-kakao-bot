@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from app.entities import Meal
+from typing import Any
+
+from app.models import Meal
 
 
 SIMPLE_TEXT_LIMIT = 1000
@@ -71,7 +73,7 @@ def _carousel(answer: str, meals: list[Meal], quick_replies: list[dict] | None =
     answer = _safe_text(answer)
     items = []
     for meal in meals:
-        item = {
+        item: dict[str, Any] = {
             "title": _limit(_meal_title(meal), CARD_TITLE_LIMIT),
             "description": _limit(_meal_card_description(meal), CARD_DESCRIPTION_LIMIT),
         }
