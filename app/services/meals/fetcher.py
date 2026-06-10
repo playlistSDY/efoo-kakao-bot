@@ -164,6 +164,7 @@ class HTMLParser:
 
         if image_url.startswith("/"):
             image_url = "https://www.hanyang.ac.kr" + image_url
+        image_url = self._normalize_image_url(image_url)
 
         korean_name = self._split_to_list(menu_text)
         if not self._is_valid_menu_list(korean_name):
@@ -176,6 +177,14 @@ class HTMLParser:
             "image": image_url,
             "meal_type": meal_type,
         }
+
+    def _normalize_image_url(self, image_url: str) -> str:
+        normalized = image_url.strip()
+        if not normalized:
+            return ""
+        if any(marker in normalized.lower() for marker in ("no-img", "no_image", "noimage")):
+            return ""
+        return normalized
 
     def _is_notice_text(self, text: str) -> bool:
         notice_patterns = [

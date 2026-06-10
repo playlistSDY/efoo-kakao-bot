@@ -9,6 +9,7 @@ SIMPLE_TEXT_LIMIT = 1000
 CARD_TITLE_LIMIT = 40
 CARD_DESCRIPTION_LIMIT = 80
 EMPTY_TEXT_FALLBACK = "에푸가 답변을 만들지 못했어요.\n다시 한 번 말해 주세요."
+UNAVAILABLE_IMAGE_MARKERS = ("no-img", "no_image", "noimage")
 
 
 def simple_text(text: str, quick_replies: list[dict] | None = None) -> dict:
@@ -36,7 +37,7 @@ def build_kakao_response(answer: str, meals: list[Meal] | None = None, quick_rep
         return simple_text(answer, quick_replies)
     if len(meals) >= 2:
         return _carousel(answer, meals[:10], quick_replies)
-    if meals[0].image_url:
+    if _meal_image_url(meals[0]):
         return _basic_card(answer, meals[0], quick_replies)
     return simple_text(answer, quick_replies)
 
@@ -52,9 +53,7 @@ def _basic_card(answer: str, meal: Meal, quick_replies: list[dict] | None = None
                         "basicCard": {
                             "title": _meal_title(meal),
                             "description": _meal_description(meal),
-                            "thumbnail": {
-                                "imageUrl": meal.image_url,
-                            },
+                            "thumbnail": {"imageUrl": _meal_image_url(meal)},
                         }
                     },
                     {
@@ -77,8 +76,9 @@ def _carousel(answer: str, meals: list[Meal], quick_replies: list[dict] | None =
             "title": _limit(_meal_title(meal), CARD_TITLE_LIMIT),
             "description": _limit(_meal_card_description(meal), CARD_DESCRIPTION_LIMIT),
         }
-        if meal.image_url:
-            item["thumbnail"] = {"imageUrl": meal.image_url}
+        image_url = _meal_image_url(meal)
+        if image_url:
+            item["thumbnail"] = {"imageUrl": image_url}
         items.append(item)
 
     return _with_quick_replies(
@@ -144,3 +144,15 @@ def _limit(text: str, limit: int) -> str:
 
 def _safe_text(text: str) -> str:
     return text.strip() or EMPTY_TEXT_FALLBACK
+
+
+def _meal_image_url(meal: Meal) -> str:
+    image_url = (meal.image_url or "").strip()
+    if not image_url:
+        return ""
+    lowered = image_url.lower()
+    if any(marker in lowered for marker in UNAVAILABLE_IMAGE_MARKERS):
+        return ""
+    if not lowered.startswith(("http://", "https://")):
+        return ""
+    return image_url
