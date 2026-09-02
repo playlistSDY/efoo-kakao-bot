@@ -17,11 +17,18 @@ MEAL_CACHE_TTL = timedelta(minutes=30)
 logger = logging.getLogger(__name__)
 
 
-def ensure_fresh_meals(db: Session, target_date: date, now: datetime) -> dict:
+def ensure_fresh_meals(
+    db: Session,
+    target_date: date,
+    now: datetime,
+    restaurant_codes: list[str] | None = None,
+) -> dict:
     refreshed = []
     reused = []
 
-    for restaurant_code, restaurant_name in settings.RESTAURANT_CODES.items():
+    codes = restaurant_codes or list(settings.RESTAURANT_CODES)
+    for restaurant_code in codes:
+        restaurant_name = settings.RESTAURANT_CODES[restaurant_code]
         restaurant = repo.get_or_create_restaurant(db, restaurant_code, restaurant_name)
         fetch_log = db.scalar(
             select(MealFetchLog).where(
