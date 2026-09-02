@@ -44,7 +44,9 @@ def _restaurants_env() -> dict[str, str]:
 class Settings:
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./efoo_chatbot.db")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+    OPENAI_REASONING_EFFORT: str = os.getenv("OPENAI_REASONING_EFFORT", "low")
+    OPENAI_MAX_TOOL_ROUNDS: int = _int_env("OPENAI_MAX_TOOL_ROUNDS", 8)
     APP_TIMEZONE: str = os.getenv("APP_TIMEZONE", "Asia/Seoul")
     HANYANG_BASE_URL: str = os.getenv("HANYANG_BASE_URL", "https://www.hanyang.ac.kr")
     MEAL_FETCH_DAYS_AHEAD: int = _int_env("MEAL_FETCH_DAYS_AHEAD", 7)
