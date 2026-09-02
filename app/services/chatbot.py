@@ -5,6 +5,7 @@ from datetime import datetime
 import hashlib
 import json
 import logging
+from time import monotonic
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,10 @@ from app.services.prompt_loader import load_prompt_template
 
 logger = logging.getLogger(__name__)
 Presentation = Literal["simple_text", "basic_card", "carousel"]
+
+
+class AgentTimeBudgetExceeded(RuntimeError):
+    pass
 
 KAKAO_RESPONSE_FORMAT = {
     "type": "json_schema",
@@ -72,7 +77,7 @@ class MealChatAgent:
         repo.update_profile_from_text(db, user, user_text)
         executor = ChatToolExecutor(db=db, now=now)
         if not settings.OPENAI_API_KEY:
-            return self._fallback(db, user_text, now, executor, "OPENAI_API_KEY 미설정")
+            return self._fallback(user_text, now, executor, "OPENAI_API_KEY 미설정", refresh_if_empty=True)
 
         history = repo.get_recent_messages(db, session.id)
         input_items: list = [
@@ -82,25 +87,35 @@ class MealChatAgent:
             }
         ]
         tool_calls: list[dict] = []
+        deadline = monotonic() + settings.AGENT_TIME_BUDGET_SECONDS
         try:
-            client = OpenAI(api_key=settings.OPENAI_API_KEY)
+            client = OpenAI(
+                api_key=settings.OPENAI_API_KEY,
+                timeout=settings.OPENAI_TIMEOUT_SECONDS,
+                max_retries=0,
+            )
             for round_number in range(1, settings.OPENAI_MAX_TOOL_ROUNDS + 1):
-                response = client.responses.create(
-                    model=settings.OPENAI_MODEL,
-                    instructions=load_prompt_template("system.txt"),
-                    input=input_items,
-                    tools=CHAT_TOOLS,
-                    parallel_tool_calls=True,
-                    reasoning={"effort": settings.OPENAI_REASONING_EFFORT},
-                    text={"format": KAKAO_RESPONSE_FORMAT, "verbosity": "low"},
-                    safety_identifier=_safety_identifier(user.kakao_user_id),
-                )
+                self._check_deadline(deadline)
+                request_options = {
+                    "model": settings.OPENAI_MODEL,
+                    "instructions": load_prompt_template("system.txt"),
+                    "input": input_items,
+                    "tools": CHAT_TOOLS,
+                    "parallel_tool_calls": True,
+                    "text": {"format": KAKAO_RESPONSE_FORMAT},
+                    "safety_identifier": _safety_identifier(user.kakao_user_id),
+                }
+                if _supports_reasoning_options(settings.OPENAI_MODEL):
+                    request_options["reasoning"] = {"effort": settings.OPENAI_REASONING_EFFORT}
+                    request_options["text"]["verbosity"] = "low"
+                response = client.responses.create(**request_options)
                 input_items += response.output
                 function_calls = [item for item in response.output if item.type == "function_call"]
                 if not function_calls:
                     return self._parse_result(response.output_text, executor, tool_calls, round_number)
 
                 for call in function_calls:
+                    self._check_deadline(deadline)
                     arguments = _parse_tool_arguments(call.arguments)
                     output = executor.execute(call.name, arguments)
                     input_items.append(
@@ -118,12 +133,16 @@ class MealChatAgent:
                             "result": json.loads(output),
                         }
                     )
+                    self._check_deadline(deadline)
+        except AgentTimeBudgetExceeded:
+            logger.warning("에이전트 시간 예산 도달: budget=%ss", settings.AGENT_TIME_BUDGET_SECONDS)
+            return self._fallback(user_text, now, executor, "시간 예산 도달", tool_calls)
         except Exception:
             logger.exception("Responses API 에이전트 실행 실패")
-            return self._fallback(db, user_text, now, executor, "에이전트 실행 오류", tool_calls)
+            return self._fallback(user_text, now, executor, "에이전트 실행 오류", tool_calls)
 
         logger.warning("에이전트가 최대 도구 라운드에 도달함: rounds=%s", settings.OPENAI_MAX_TOOL_ROUNDS)
-        return self._fallback(db, user_text, now, executor, "최대 도구 라운드 도달", tool_calls)
+        return self._fallback(user_text, now, executor, "최대 도구 라운드 도달", tool_calls)
 
     def run_debug(self, db: Session, user: UserProfile, session: ChatSession, user_text: str) -> dict:
         result = self.run_result(db, user, session, user_text)
@@ -166,12 +185,12 @@ class MealChatAgent:
 
     def _fallback(
         self,
-        db: Session,
         user_text: str,
         now: datetime,
         executor: ChatToolExecutor,
         reason: str,
         tool_calls: list[dict] | None = None,
+        refresh_if_empty: bool = False,
     ) -> AgentResult:
         meal_intent = infer_meal_intent(user_text)
         meals = list(executor.seen_meals.values())
@@ -180,13 +199,23 @@ class MealChatAgent:
             meal_types = infer_meal_types(user_text, now)
             result = executor.execute(
                 "get_meals",
-                {"date": str(target_date), "restaurant_codes": None, "meal_types": meal_types, "refresh": True},
+                {
+                    "date": str(target_date),
+                    "restaurant_codes": None,
+                    "meal_types": meal_types,
+                    "refresh": refresh_if_empty,
+                },
             )
             tool_calls = (tool_calls or []) + [
                 {
                     "round": "fallback",
                     "name": "get_meals",
-                    "args": {"date": str(target_date), "restaurant_codes": None, "meal_types": meal_types, "refresh": True},
+                    "args": {
+                        "date": str(target_date),
+                        "restaurant_codes": None,
+                        "meal_types": meal_types,
+                        "refresh": refresh_if_empty,
+                    },
                     "result": json.loads(result),
                 }
             ]
@@ -200,6 +229,10 @@ class MealChatAgent:
             tool_calls=tool_calls or [],
             agent_steps=["remember_user", f"fallback:{reason}"],
         )
+
+    def _check_deadline(self, deadline: float) -> None:
+        if monotonic() >= deadline:
+            raise AgentTimeBudgetExceeded
 
     def _build_user_context(self, user: UserProfile, user_text: str, now: datetime, history: list) -> str:
         recent_history = history[-12:]
@@ -227,6 +260,11 @@ def _parse_tool_arguments(raw: str) -> dict:
     except json.JSONDecodeError:
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _supports_reasoning_options(model: str) -> bool:
+    normalized = model.lower()
+    return normalized.startswith(("gpt-5", "o1", "o3", "o4"))
 
 
 def _safe_presentation(value: str, meals: list[Meal]) -> Presentation:

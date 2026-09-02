@@ -113,6 +113,8 @@ class EfooAgentTest(unittest.TestCase):
             OPENAI_MODEL="gpt-5.6-luna",
             OPENAI_REASONING_EFFORT="low",
             OPENAI_MAX_TOOL_ROUNDS=8,
+            OPENAI_TIMEOUT_SECONDS=15,
+            AGENT_TIME_BUDGET_SECONDS=40,
         )
 
         with patch("app.services.chatbot.OpenAI", return_value=fake_client), patch(
@@ -124,6 +126,43 @@ class EfooAgentTest(unittest.TestCase):
         self.assertEqual(result.presentation, "basic_card")
         self.assertEqual(result.meals, [self.meal])
         self.assertEqual(result.tool_calls[0]["name"], "get_meals")
+
+    def test_legacy_model_does_not_receive_reasoning_options(self):
+        user = repo.get_or_create_user(self.db, "legacy-model-test")
+        session = repo.get_or_create_active_session(self.db, user)
+        response = SimpleNamespace(
+            output=[SimpleNamespace(type="message")],
+            output_text=json.dumps(
+                {
+                    "message": "안녕하세요!",
+                    "presentation": "simple_text",
+                    "meal_ids": [],
+                    "meal_intent": False,
+                    "quick_replies": [],
+                },
+                ensure_ascii=False,
+            ),
+        )
+        responses = SimpleNamespace(create=unittest.mock.Mock(return_value=response))
+        fake_client = SimpleNamespace(responses=responses)
+        fake_settings = SimpleNamespace(
+            APP_TIMEZONE="Asia/Seoul",
+            OPENAI_API_KEY="test-key",
+            OPENAI_MODEL="gpt-4o-mini",
+            OPENAI_REASONING_EFFORT="low",
+            OPENAI_MAX_TOOL_ROUNDS=4,
+            OPENAI_TIMEOUT_SECONDS=15,
+            AGENT_TIME_BUDGET_SECONDS=40,
+        )
+
+        with patch("app.services.chatbot.OpenAI", return_value=fake_client), patch(
+            "app.services.chatbot.settings", fake_settings
+        ):
+            MealChatAgent().run_result(self.db, user, session, "안녕")
+
+        request = responses.create.call_args.kwargs
+        self.assertNotIn("reasoning", request)
+        self.assertNotIn("verbosity", request["text"])
 
 
 if __name__ == "__main__":

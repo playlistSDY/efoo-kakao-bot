@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import logging
-import random
 
 import requests
 
@@ -11,17 +9,6 @@ from app.services.kakao_templates import build_kakao_response
 
 
 logger = logging.getLogger(__name__)
-CALLBACK_TIMEOUT_SECONDS = 50
-CALLBACK_EXECUTOR = ThreadPoolExecutor(max_workers=4)
-
-CALLBACK_TIMEOUT_MESSAGES = [
-    "에푸가 생각을 너무 깊게 하다가 잠깐 기절했어요.\n아래 버튼으로 다시 불러주세요.",
-    "에푸 머릿속에서 메뉴 회의가 너무 길어졌어요.\n이번 답변은 잠깐 멈췄어요.",
-    "에푸가 열심히 찾다가 시간이 다 됐어요.\n원하는 식당 메뉴를 바로 눌러주세요.",
-    "에푸가 메뉴판을 너무 오래 들여다봤어요.\n다시 누르면 바로 이어서 볼게요.",
-    "에푸가 답을 정리하다가 1분을 넘길 뻔했어요.\n아래 메뉴로 빠르게 다시 볼 수 있어요.",
-]
-
 CALLBACK_TIMEOUT_QUICK_REPLIES = [
     {"label": "학식", "action": "message", "messageText": "학생식당 메뉴 알려줘"},
     {"label": "교식", "action": "message", "messageText": "교직원식당 메뉴 알려줘"},
@@ -46,35 +33,32 @@ def find_callback_url(payload: dict) -> str | None:
 
 
 def send_kakao_callback_response(callback_url: str, kakao_user_id: str, utterance: str, raw_payload: dict) -> None:
-    future = CALLBACK_EXECUTOR.submit(create_chat_response_in_new_session, kakao_user_id, utterance, raw_payload)
     try:
-        response_payload = future.result(timeout=CALLBACK_TIMEOUT_SECONDS)
+        response_payload = create_chat_response_in_new_session(kakao_user_id, utterance, raw_payload)
         post_kakao_callback(callback_url, response_payload)
         logger.info("카카오 callback 응답 전송 완료")
-    except TimeoutError:
-        logger.warning("카카오 callback 응답 시간 초과, fallback 전송: user=%s utterance=%s", kakao_user_id, utterance)
-        try:
-            post_kakao_callback(callback_url, build_callback_timeout_response())
-        except Exception:
-            logger.exception("카카오 callback timeout fallback 전송 실패")
     except Exception:
-        logger.exception("카카오 callback 응답 생성 실패, fallback 전송")
+        logger.exception("카카오 callback 응답 생성 실패: user=%s utterance=%s", kakao_user_id, utterance)
         try:
-            post_kakao_callback(callback_url, build_callback_timeout_response())
+            post_kakao_callback(callback_url, build_callback_error_response())
         except Exception:
             logger.exception("카카오 callback fallback 전송 실패")
 
 
 def build_callback_timeout_response() -> dict:
+    return build_callback_error_response()
+
+
+def build_callback_error_response() -> dict:
     return build_kakao_response(
-        random.choice(CALLBACK_TIMEOUT_MESSAGES),
+        "메뉴 조회 중 일시적인 오류가 생겼어요.\n아래에서 식당을 골라 다시 확인해 주세요.",
         [],
         CALLBACK_TIMEOUT_QUICK_REPLIES,
     )
 
 
 def post_kakao_callback(callback_url: str, payload: dict) -> None:
-    response = requests.post(callback_url, json=payload, timeout=10)
+    response = requests.post(callback_url, json=payload, timeout=5)
     if response.status_code >= 400:
         logger.error(
             "카카오 callback POST 실패: status=%s body=%s payload=%s",

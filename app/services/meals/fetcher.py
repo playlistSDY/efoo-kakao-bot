@@ -271,7 +271,15 @@ class MealService:
         }
 
         api_url, params = self.build_meal_url(restaurant_code, year, month, day)
-        response = self.session.get(api_url, params=params, headers=headers)
+        response = self.session.get(
+            api_url,
+            params=params,
+            headers=headers,
+            timeout=(
+                settings.MEAL_HTTP_CONNECT_TIMEOUT_SECONDS,
+                settings.MEAL_HTTP_READ_TIMEOUT_SECONDS,
+            ),
+        )
         response.raise_for_status()
         return response.text
 
