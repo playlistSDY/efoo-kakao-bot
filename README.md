@@ -18,7 +18,7 @@
   → Callback API 전송
 ```
 
-에이전트는 한 번의 툴 호출로 제한되지 않습니다. 예를 들어 “내일 점심이랑 모레 점심 비교해줘”는 날짜별 학식 툴을 여러 번 호출한 다음 결과를 합쳐 답할 수 있습니다. 최대 라운드는 `OPENAI_MAX_TOOL_ROUNDS`로 제한합니다.
+에이전트는 한 번의 툴 호출로 제한되지 않습니다. 예를 들어 “내일 점심이랑 모레 점심 비교해줘”는 날짜별 학식 툴을 여러 번 호출한 다음 결과를 합쳐 답할 수 있습니다. 최대 라운드는 `OPENAI_MAX_TOOL_ROUNDS`, 전체 실행시간은 `AGENT_TIME_BUDGET_SECONDS`로 제한합니다.
 
 ## 모델
 
@@ -102,7 +102,11 @@ DATABASE_URL=sqlite:////data/efoo_chatbot.db
 OPENAI_API_KEY=sk-your-openai-api-key
 OPENAI_MODEL=gpt-5.6-luna
 OPENAI_REASONING_EFFORT=low
-OPENAI_MAX_TOOL_ROUNDS=8
+OPENAI_MAX_TOOL_ROUNDS=4
+OPENAI_TIMEOUT_SECONDS=15
+AGENT_TIME_BUDGET_SECONDS=40
+MEAL_HTTP_CONNECT_TIMEOUT_SECONDS=2
+MEAL_HTTP_READ_TIMEOUT_SECONDS=5
 APP_TIMEZONE=Asia/Seoul
 MEAL_FETCH_DAYS_AHEAD=7
 HANYANG_BASE_URL=https://www.hanyang.ac.kr
@@ -118,6 +122,29 @@ POST /kakao/callback
 ```
 
 요청에 `userRequest.callbackUrl`이 있으면 서버는 먼저 `useCallback: true`를 반환하고 백그라운드에서 에이전트를 실행합니다. 실제 응답은 Callback API로 전송합니다. callback URL이 없는 로컬 요청은 같은 에이전트를 동기 실행합니다.
+
+## 배포 후 응답이 멈출 때
+
+현재 서버에 실제 적용된 모델과 시간 예산을 먼저 확인합니다.
+
+```bash
+curl https://내-서버-주소/health
+```
+
+정상 예시:
+
+```json
+{"status":"ok","model":"gpt-5.6-luna","agent_time_budget_seconds":40.0}
+```
+
+모델이 `gpt-4o-mini`처럼 예전 값이면 서버의 기존 `.env` 또는 배포 플랫폼 환경변수가 새 기본값을 덮어쓰고 있는 것입니다. 서버 환경변수를 변경한 뒤 컨테이너를 다시 생성합니다.
+
+```bash
+docker compose up -d --build --force-recreate
+docker compose logs -f chatbot
+```
+
+`Responses API 에이전트 실행 실패` 로그가 있으면 바로 뒤의 OpenAI 오류 내용을 확인합니다. `학식 정보 수집 실패`라면 학교 사이트 연결 문제이며, 서버는 설정된 HTTP timeout 뒤 DB에 저장된 메뉴로 답변을 계속 시도합니다.
 
 ## 테스트
 
