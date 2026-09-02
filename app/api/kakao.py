@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.schemas.kakao import KakaoRequest
 from app.services.kakao_callback import find_callback_url, send_kakao_callback_response
-from app.services.kakao_sync_response import create_fast_sync_response
+from app.services.kakao_chat import create_chat_response
 from app.services.wait_messages import random_wait_message
 
 
@@ -48,4 +48,4 @@ def kakao_callback(payload: KakaoRequest, background_tasks: BackgroundTasks, db:
             },
         }
 
-    return create_fast_sync_response(db, kakao_user_id, utterance, raw_payload)
+    return create_chat_response(db, kakao_user_id, utterance, raw_payload)

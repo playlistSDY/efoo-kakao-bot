@@ -16,13 +16,6 @@ def _int_env(name: str, default: int) -> int:
     return default if raw in (None, "") else int(raw)
 
 
-def _bool_env(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw in (None, ""):
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _restaurants_env() -> dict[str, str]:
     raw = os.getenv("HANYANG_RESTAURANTS", "").strip()
     if not raw:
@@ -50,7 +43,6 @@ class Settings:
     APP_TIMEZONE: str = os.getenv("APP_TIMEZONE", "Asia/Seoul")
     HANYANG_BASE_URL: str = os.getenv("HANYANG_BASE_URL", "https://www.hanyang.ac.kr")
     MEAL_FETCH_DAYS_AHEAD: int = _int_env("MEAL_FETCH_DAYS_AHEAD", 7)
-    ENABLE_LLM_QUICK_REPLIES: bool = _bool_env("ENABLE_LLM_QUICK_REPLIES", False)
     RESTAURANT_CODES: dict[str, str] = field(default_factory=_restaurants_env)
 
 

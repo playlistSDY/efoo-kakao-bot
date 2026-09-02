@@ -30,32 +30,37 @@ def simple_text(text: str, quick_replies: list[dict] | None = None) -> dict:
     )
 
 
-def build_kakao_response(answer: str, meals: list[Meal] | None = None, quick_replies: list[dict] | None = None) -> dict:
+def build_kakao_response(
+    answer: str,
+    meals: list[Meal] | None = None,
+    quick_replies: list[dict] | None = None,
+    presentation: str = "auto",
+) -> dict:
     meals = meals or []
     if not meals:
         return simple_text(answer, quick_replies)
-    if len(meals) >= 2:
+    if presentation == "simple_text":
+        return simple_text(answer, quick_replies)
+    if presentation == "carousel" or (presentation == "auto" and len(meals) >= 2):
         return _carousel(answer, meals[:10], quick_replies)
-    if meals[0].image_url:
-        return _basic_card(answer, meals[0], quick_replies)
-    return simple_text(answer, quick_replies)
+    return _basic_card(answer, meals[0], quick_replies)
 
 
 def _basic_card(answer: str, meal: Meal, quick_replies: list[dict] | None = None) -> dict:
     answer = _safe_text(answer)
+    card: dict[str, Any] = {
+        "title": _limit(_meal_title(meal), CARD_TITLE_LIMIT),
+        "description": _limit(_meal_description(meal), CARD_DESCRIPTION_LIMIT),
+    }
+    if meal.image_url:
+        card["thumbnail"] = {"imageUrl": meal.image_url}
     return _with_quick_replies(
         {
             "version": "2.0",
             "template": {
                 "outputs": [
                     {
-                        "basicCard": {
-                            "title": _meal_title(meal),
-                            "description": _meal_description(meal),
-                            "thumbnail": {
-                                "imageUrl": meal.image_url,
-                            },
-                        }
+                        "basicCard": card
                     },
                     {
                         "simpleText": {
