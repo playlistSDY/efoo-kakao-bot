@@ -1,139 +1,151 @@
-# Efoo 학식 추천 카카오톡 챗봇
+# 에푸: 툴을 사용하는 학식 카카오톡 에이전트
 
-LangChain/LangGraph와 OpenAI API를 사용하는 학식 안내 및 추천용 카카오톡 챗봇 백엔드입니다.
+한양대학교 ERICA 학식, 식당 위치, 운영시간을 조회하고 카카오톡에 알맞은 형태로 답하는 FastAPI 백엔드입니다.
 
-## 기능
+기존의 고정 LangGraph 흐름은 제거했습니다. OpenAI Responses API 모델이 대화를 읽고 필요한 툴을 0회 이상 호출한 뒤, 일반 텍스트·일반 카드·이미지 카드·캐러셀 중 표현 방식을 직접 계획합니다.
 
-- 사용자가 학식 정보를 물을 때 필요한 날짜의 한양대 학식 정보를 크롤링해 DB 저장
-- 같은 날짜/식당 정보가 30분 안에 갱신된 경우 기존 DB 캐시 사용
-- 카카오톡 유저별 프로필, 채팅 세션, 대화 메시지 저장
-- 기존 알러지, 취향, 예산 기록과 현재 날짜/시간을 반영한 학식 안내
-- 챗봇이 필요할 때 현재 날짜/시간 도구 호출
-- LangGraph 기반 응답 플로우와 OpenAI Chat API 사용
-
-## 프로젝트 구조
-
-주요 애플리케이션 코드는 책임별 패키지로 분리되어 있습니다.
+## 동작 방식
 
 ```text
-app/
-  main.py                 # FastAPI 앱 생성 및 라우터 등록
-  config.py               # 환경변수 기반 설정
-  api/                    # FastAPI 라우터
-  db/                     # SQLAlchemy Base, engine, session, DB 초기화
-  models/                 # SQLAlchemy ORM 모델
-  repositories/           # DB 조회/저장 함수
-  domain/                 # 날짜/식사 의도, 식당 기본 정보 등 도메인 규칙
-  schemas/                # 요청/응답 Pydantic 스키마
-  services/               # 챗봇, 카카오 응답, 식단 수집/캐시 등 유스케이스
-  prompts/                # OpenAI 시스템/사용자 프롬프트 텍스트 템플릿
-scripts/                  # 수동 식단 수집 및 DB 보조 스크립트
+카카오 요청
+  → 사용자 프로필과 최근 대화 로드
+  → Responses API 에이전트
+      ↔ 현재 시각 툴
+      ↔ 날짜별 학식 조회 툴
+      ↔ 식당 정보 툴
+  → 구조화된 카카오 응답 계획
+  → 텍스트 / 카드 / 이미지 카드 / 캐러셀 렌더링
+  → Callback API 전송
 ```
 
-아키텍처 리팩토링 후 루트 `app/`에는 앱 진입점과 설정만 두고, 구현 세부사항은 다음처럼 나누어 관리합니다.
+에이전트는 한 번의 툴 호출로 제한되지 않습니다. 예를 들어 “내일 점심이랑 모레 점심 비교해줘”는 날짜별 학식 툴을 여러 번 호출한 다음 결과를 합쳐 답할 수 있습니다. 최대 라운드는 `OPENAI_MAX_TOOL_ROUNDS`로 제한합니다.
 
-- DB 연결과 세션 관리는 `app/db/`에서 담당합니다.
-- ORM 모델은 `app/models/`에서 식당, 식단, 사용자, 채팅 모델로 분리합니다.
-- 식단 수집, 30분 캐시, 수집 lock, 스케줄러는 `app/services/meals/`에 있습니다.
-- 카카오 응답 템플릿, 빠른 동기 응답, Callback API 전송은 `app/services/`의 카카오 관련 모듈에서 처리합니다.
-- 학식 날짜/식사 시간 의도 추론은 `app/domain/meal_intent.py`에 있습니다.
-- 식당 위치, 줄임말, 운영시간 같은 정적 도메인 정보는 `app/domain/restaurants/`에 있습니다.
-- LangChain tool은 `app/services/chat_tools/`에 있습니다.
-- OpenAI 프롬프트 본문은 Python 코드가 아니라 `app/prompts/system.txt`, `app/prompts/user.txt`에 있습니다.
+## 모델
 
-## Docker Compose 실행
+기본값은 `gpt-5.6-luna`, reasoning effort는 `low`입니다.
+
+- 최신 GPT-5.6 계열의 툴 호출과 구조화 출력을 사용합니다.
+- 비용이 중요한 고빈도 챗봇에 맞춘 기본값입니다.
+- 더 높은 품질이 필요하면 `OPENAI_MODEL=gpt-5.6-terra`로 바꿀 수 있습니다.
+- 모델과 reasoning effort는 코드 수정 없이 환경변수로 교체할 수 있습니다.
+
+모델 가격과 지원 기능은 [OpenAI 모델 비교](https://developers.openai.com/api/docs/models/compare)에서 확인합니다.
+
+## 에이전트 툴
+
+### `get_current_datetime`
+
+`Asia/Seoul` 기준 현재 날짜, 요일, 시각을 반환합니다.
+
+### `get_meals`
+
+정확히 한 날짜의 학식을 조회합니다.
+
+- `date`: `YYYY-MM-DD`
+- `restaurant_codes`: 특정 식당 코드 배열 또는 전체 식당을 뜻하는 `null`
+- `meal_types`: `조식`, `중식`, `석식` 배열 또는 하루 전체를 뜻하는 `null`
+- `refresh`: 최신 캐시 확인 여부
+
+특정 식당만 요청하면 해당 식당만 크롤링하므로 불필요한 네트워크 요청을 줄입니다. 동일 날짜·식당의 성공한 조회가 30분 이내면 DB 캐시를 재사용합니다.
+
+### `get_restaurant_info`
+
+식당명, 줄임말, 위치, 운영시간과 오늘 현재 운영 상태를 반환합니다.
+
+| 코드 | 식당 | 줄임말 | 위치 |
+|---|---|---|---|
+| `re11` | 교직원식당 | 교식 | 복지관 3층 |
+| `re12` | 학생식당 | 학식 | 복지관 2층 |
+| `re13` | 창의인재원식당 | 창의, 긱식 | 창의관 1층 |
+| `re15` | 창업보육센터 | 창보 | 창업보육센터 지하 1층 |
+
+## 카카오 출력
+
+모델의 최종 출력은 JSON Schema로 강제됩니다.
+
+- `message`: 카드 없이 읽어도 이해되는 최종 답변
+- `presentation`: `simple_text`, `basic_card`, `carousel`
+- `meal_ids`: 실제 툴 결과 중 카드에 사용할 메뉴 ID
+- `quick_replies`: 최대 5개의 후속 질문
+
+서버는 모델이 조회하지 않은 메뉴 ID를 무시하고 카카오 제약에 맞게 길이를 제한합니다. `basic_card`에 이미지 URL이 있으면 이미지 카드가 되고, 없으면 썸네일 없는 일반 카드가 됩니다.
+
+## 실행
+
+### Docker Compose
 
 ```bash
 cp .env.example .env
-# .env의 OPENAI_API_KEY를 설정
+# .env의 OPENAI_API_KEY를 실제 키로 변경
 docker compose up -d --build
 ```
 
-서버는 다음 주소로 실행됩니다.
-
-```text
-http://localhost:8000
-```
-
-상태 확인:
-
 ```bash
 curl http://localhost:8000/health
-```
-
-로그 확인:
-
-```bash
 docker compose logs -f chatbot
 ```
 
-수동 크롤링:
-
-```bash
-docker compose exec chatbot python scripts/fetch_today_meals.py
-```
-
-앱 실행 중 자동 자정 크롤링은 사용하지 않습니다. 챗봇 응답 시점에 필요한 날짜 데이터를 확인하고, 식당별 마지막 수집 시간이 30분을 넘으면 다시 크롤링합니다.
-
-카카오 i 오픈빌더 webhook URL은 다음 엔드포인트로 연결합니다.
-
-```text
-POST /kakao/callback
-```
-
-AI 응답은 카카오 Callback API를 지원합니다.
-
-- 카카오 요청의 `userRequest.callbackUrl`이 있으면 서버는 5초 안에 `{"version":"2.0","useCallback":true}`를 먼저 반환합니다.
-- 이때 `data.text`에는 `app/services/wait_messages.py`의 대기 문구 중 하나를 랜덤으로 담아 보냅니다.
-- 실제 OpenAI 응답, 메뉴 카드, 캐러셀은 백그라운드에서 `callbackUrl`로 POST 전송합니다.
-- `callbackUrl`이 없는 테스트 요청은 기존처럼 동기 응답을 바로 반환합니다.
-
-SQLite DB는 Docker volume `efoo-data`의 `/data/efoo_chatbot.db`에 저장됩니다.
-
-한양대 학식 크롤링 식당 코드는 `.env`의 `HANYANG_RESTAURANTS`로 설정합니다.
-
-```env
-HANYANG_RESTAURANTS=re11:교직원식당,re12:학생식당,re13:창의인재원식당,re15:창업보육센터
-```
-
-현재 사용하는 식당 코드는 다음입니다.
-
-- `re11`: 교직원식당, 줄임말 `교식`, 복지관 3층, 중식 11:30-13:30
-- `re12`: 학생식당, 줄임말 `학식`, 복지관 2층, 조식 08:30-09:40, 중식 11:30-13:30
-- `re13`: 창의인재원식당, 줄임말 `창의`, `창의인재`, `긱식`, `기숙사식당`, 창의관 1층, 조식 07:40-09:00, 중식 11:30-13:20, 석식 17:10-18:40
-- `re15`: 창업보육센터, 줄임말 `창보`, 창업보육센터 지하 1층, 중식 11:30-13:30, 석식 17:00-18:30
-
-파서는 식당별로 `조식`, `중식`, `석식`을 각각 리스트로 저장합니다. 특정 식사 시간이 없는 날은 빈 리스트로 남고, 같은 식사 시간에 메뉴가 여러 개면 여러 `Meal` row로 저장됩니다.
-
-## 챗봇 도구
-
-`app/services/chat_tools/tools.py`에 LangChain tool이 정의되어 있습니다.
-
-- `get_current_datetime`: `Asia/Seoul` 기준 현재 날짜, 요일, 시간 조회
-
-사용자가 "오늘 몇 시야?", "지금 몇 시야?"처럼 물으면 OpenAI 모델이 필요한 도구를 선택해 호출합니다.
-
-## 프롬프트 관리
-
-OpenAI로 전달하는 긴 프롬프트 본문은 `app/prompts/`의 텍스트 파일로 분리되어 있습니다.
-
-- `app/prompts/system.txt`: 챗봇 역할, 답변 원칙, 카카오톡 출력 형식
-- `app/prompts/user.txt`: 현재 시각, 조회 날짜, 식사 종류, 사용자 기록, 대화 기록, DB 학식 데이터 템플릿
-
-`app/services/prompt_loader.py`가 템플릿 파일을 읽고, `app/services/prompt_builder.py`가 LangGraph state와 DB 조회 결과를 템플릿 변수로 채웁니다.
-
-## 로컬 실행
+### 로컬
 
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env
-# .env의 OPENAI_API_KEY를 설정
+# .env의 OPENAI_API_KEY를 실제 키로 변경
 .venv/bin/python -m uvicorn app.main:app --reload
 ```
 
-수동 크롤링은 다음 명령으로 실행합니다.
+## 환경변수
+
+```env
+DATABASE_URL=sqlite:////data/efoo_chatbot.db
+OPENAI_API_KEY=sk-your-openai-api-key
+OPENAI_MODEL=gpt-5.6-luna
+OPENAI_REASONING_EFFORT=low
+OPENAI_MAX_TOOL_ROUNDS=8
+APP_TIMEZONE=Asia/Seoul
+MEAL_FETCH_DAYS_AHEAD=7
+HANYANG_BASE_URL=https://www.hanyang.ac.kr
+HANYANG_RESTAURANTS=re11:교직원식당,re12:학생식당,re13:창의인재원식당,re15:창업보육센터
+```
+
+## 카카오 연동
+
+카카오 i 오픈빌더 webhook은 다음 엔드포인트를 사용합니다.
+
+```text
+POST /kakao/callback
+```
+
+요청에 `userRequest.callbackUrl`이 있으면 서버는 먼저 `useCallback: true`를 반환하고 백그라운드에서 에이전트를 실행합니다. 실제 응답은 Callback API로 전송합니다. callback URL이 없는 로컬 요청은 같은 에이전트를 동기 실행합니다.
+
+## 테스트
 
 ```bash
-.venv/bin/python scripts/fetch_today_meals.py
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+API를 직접 확인할 수도 있습니다.
+
+```bash
+curl --get 'http://localhost:8000/test/chat' \
+  --data-urlencode 'message=9월 3일 학생식당 점심 알려줘'
+```
+
+`/test/chat` 응답에는 실행한 툴 이름·인자·결과, 에이전트 단계, 선택한 카카오 표현 방식과 최종 카카오 JSON이 포함됩니다.
+
+## 주요 구조
+
+```text
+app/
+  api/kakao.py                 # 카카오 webhook
+  services/chatbot.py          # Responses API 반복 툴 에이전트
+  services/chat_tools/tools.py # 날짜별 학식·식당·현재시각 툴
+  services/kakao_templates.py  # 카카오 텍스트/카드/캐러셀 렌더러
+  services/meals/              # 크롤러와 30분 캐시
+  prompts/system.txt           # 에이전트 정책
+  repositories/                # DB 접근
+  models/                      # SQLAlchemy 모델
+tests/
+  test_agent_and_tools.py      # 툴 루프와 렌더러 테스트
 ```
