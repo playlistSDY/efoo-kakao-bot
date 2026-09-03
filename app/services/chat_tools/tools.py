@@ -165,6 +165,7 @@ class ChatToolExecutor:
                 self.now,
                 restaurant_codes,
                 stale_while_revalidate=True,
+                background_if_missing=bool(arguments.get("background_if_missing", False)),
             )
         meals = repo.get_meals_flexible(
             self.db,

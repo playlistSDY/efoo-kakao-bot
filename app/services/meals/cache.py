@@ -32,10 +32,12 @@ def ensure_fresh_meals(
     now: datetime,
     restaurant_codes: list[str] | None = None,
     stale_while_revalidate: bool = False,
+    background_if_missing: bool = False,
 ) -> dict:
     refreshed = []
     reused = []
     stale_served = []
+    cold_refresh_scheduled = []
 
     codes = restaurant_codes or list(settings.RESTAURANT_CODES)
     for restaurant_code in codes:
@@ -62,6 +64,16 @@ def ensure_fresh_meals(
             _schedule_refresh(restaurant_code, target_date)
             stale_served.append(restaurant_code)
             logger.info("만료된 학식 캐시 즉시 제공 후 백그라운드 갱신: restaurant=%s date=%s", restaurant_code, target_date)
+            continue
+
+        if background_if_missing:
+            _schedule_refresh(restaurant_code, target_date)
+            cold_refresh_scheduled.append(restaurant_code)
+            logger.info(
+                "최초 학식 조회를 백그라운드에 예약: restaurant=%s date=%s",
+                restaurant_code,
+                target_date,
+            )
             continue
 
         with meal_fetch_lock(restaurant_code, target_date):
@@ -99,6 +111,7 @@ def ensure_fresh_meals(
         "ttl_minutes": int(MEAL_CACHE_TTL.total_seconds() // 60),
         "reused": reused,
         "stale_served": stale_served,
+        "cold_refresh_scheduled": cold_refresh_scheduled,
         "refreshed": refreshed,
     }
 

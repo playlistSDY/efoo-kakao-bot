@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 import hashlib
 import json
 import logging
@@ -14,7 +14,13 @@ from sqlalchemy.orm import Session
 
 from app import repositories as repo
 from app.config import settings
-from app.domain.meal_intent import infer_meal_intent, infer_meal_types, infer_target_date
+from app.domain.meal_intent import (
+    infer_meal_intent,
+    infer_meal_types,
+    infer_restaurant_codes,
+    infer_target_date,
+    is_fast_meal_lookup,
+)
 from app.models import ChatSession, Meal, UserProfile
 from app.services.chat_tools import CHAT_TOOLS, ChatToolExecutor
 from app.services.prompt_loader import load_prompt_template
@@ -86,6 +92,9 @@ class MealChatAgent:
             user_id=user.id,
             excluded_message_ids={current_message_id} if current_message_id else set(),
         )
+        fast_result = self._try_fast_meal_lookup(user_text, now, executor)
+        if fast_result:
+            return fast_result
         if not settings.OPENAI_API_KEY:
             return self._fallback(user_text, now, executor, "OPENAI_API_KEY 미설정", refresh_if_empty=True)
 
@@ -260,6 +269,51 @@ class MealChatAgent:
             agent_steps=["remember_user", f"fallback:{reason}"],
         )
 
+    def _try_fast_meal_lookup(
+        self,
+        user_text: str,
+        now: datetime,
+        executor: ChatToolExecutor,
+    ) -> AgentResult | None:
+        if not is_fast_meal_lookup(user_text):
+            return None
+
+        target_date = infer_target_date(user_text, now)
+        meal_types = infer_meal_types(user_text, now)
+        restaurant_codes = infer_restaurant_codes(user_text)
+        arguments = {
+            "date": str(target_date),
+            "restaurant_codes": restaurant_codes,
+            "meal_types": meal_types,
+            "refresh": True,
+            "background_if_missing": True,
+        }
+        output = executor.execute("get_meals", arguments)
+        payload = json.loads(output)
+        meals = list(executor.seen_meals.values())[:10]
+        cache = payload.get("cache") or {}
+        cold_scheduled = bool(cache.get("cold_refresh_scheduled"))
+        answer = _fast_meal_answer(meals, target_date, cold_scheduled)
+        quick_replies = []
+        if cold_scheduled and not meals:
+            quick_replies = [
+                {
+                    "label": "다시 조회",
+                    "action": "message",
+                    "messageText": user_text[:100],
+                }
+            ]
+        return AgentResult(
+            answer=answer,
+            presentation="carousel" if len(meals) > 1 else "basic_card" if meals else "simple_text",
+            meals=meals,
+            meal_intent=True,
+            context_mode="new",
+            quick_replies=quick_replies,
+            tool_calls=[{"round": "fast", "name": "get_meals", "args": arguments, "result": payload}],
+            agent_steps=["remember_user", "fast_meal_lookup:get_meals", "render_cached_template"],
+        )
+
     def _check_deadline(self, deadline: float) -> None:
         if monotonic() >= deadline:
             raise AgentTimeBudgetExceeded
@@ -387,4 +441,20 @@ def _fallback_answer(meals: list[Meal], meal_intent: bool) -> str:
         restaurant = meal.restaurant.name if meal.restaurant else "식당"
         menu = ", ".join(meal.korean_name or []) or "메뉴 정보 없음"
         lines.extend([f"{restaurant} {meal.meal_type}", menu, ""])
+    return "\n".join(lines).strip()
+
+
+def _fast_meal_answer(meals: list[Meal], target_date: date, cold_scheduled: bool) -> str:
+    date_text = f"{target_date.month}월 {target_date.day}일"
+    if not meals:
+        if cold_scheduled:
+            return f"{date_text} 메뉴를 처음 불러오고 있어요.\n잠시 후 ‘다시 조회’를 눌러 주세요."
+        return f"{date_text}에는 확인된 메뉴가 없어요."
+
+    lines = [f"{date_text} 메뉴예요.", ""]
+    for meal in meals:
+        restaurant = meal.restaurant.name if meal.restaurant else "식당"
+        menu = ", ".join(meal.korean_name or []) or "메뉴 정보 없음"
+        price = f" ({meal.price})" if meal.price else ""
+        lines.extend([f"{restaurant} · {meal.meal_type}", f"{menu}{price}", ""])
     return "\n".join(lines).strip()

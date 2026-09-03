@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from time import monotonic
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -16,14 +18,22 @@ router = APIRouter()
 
 @router.get("/test/chat")
 def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-user", db: Session = Depends(get_db)):
+    started_at = monotonic()
     user = repo.get_or_create_user(db, user_id)
     session = repo.get_or_create_active_session(db, user)
     repo.add_message(db, session.id, "user", message, {"source": "test-chat"})
 
     result = meal_chat_agent.run_result(db, user, session, message)
     repo.add_message(db, session.id, "assistant", result.answer)
+    kakao_response = build_kakao_response(
+        result.answer,
+        result.meals,
+        result.quick_replies,
+        presentation=result.presentation,
+    )
 
     return {
+        "elapsed_ms": round((monotonic() - started_at) * 1000, 1),
         "user_id": user_id,
         "message": message,
         "agent_steps": result.agent_steps,
@@ -32,12 +42,7 @@ def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-
         "context_mode": result.context_mode,
         "quick_replies": result.quick_replies,
         "answer": result.answer,
-        "kakao_response": build_kakao_response(
-            result.answer,
-            result.meals,
-            result.quick_replies,
-            presentation=result.presentation,
-        ),
+        "kakao_response": kakao_response,
     }
 
 

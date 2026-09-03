@@ -16,6 +16,7 @@ import app.models  # noqa: F401 - SQLAlchemy 모델 등록
 from app import repositories as repo
 from app.db.base import Base
 from app.domain.meal_images import is_placeholder_meal_image_url, normalize_meal_image_url
+from app.domain.meal_intent import infer_restaurant_codes, is_fast_meal_lookup
 from app.models import MealFetchLog
 from app.services.chat_tools import ChatToolExecutor
 from app.services.chatbot import MealChatAgent, _safe_context_mode
@@ -92,6 +93,53 @@ class EfooAgentTest(unittest.TestCase):
         self.assertEqual(status["stale_served"], ["re12"])
         self.assertEqual(status["refreshed"], [])
         schedule.assert_called_once_with("re12", date(2026, 9, 2))
+
+    def test_missing_meal_cache_schedules_refresh_without_blocking(self):
+        now = datetime(2026, 9, 2, 12, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+        with patch("app.services.meals.cache._schedule_refresh", return_value=True) as schedule:
+            status = ensure_fresh_meals(
+                self.db,
+                date(2026, 9, 3),
+                now,
+                ["re12"],
+                stale_while_revalidate=True,
+                background_if_missing=True,
+            )
+
+        self.assertEqual(status["cold_refresh_scheduled"], ["re12"])
+        schedule.assert_called_once_with("re12", date(2026, 9, 3))
+
+    def test_fast_lookup_only_handles_independent_menu_queries(self):
+        self.assertTrue(is_fast_meal_lookup("오늘 중식 식당별로 정리해줘"))
+        self.assertTrue(is_fast_meal_lookup("9월 2일 학생식당 메뉴 알려줘"))
+        self.assertFalse(is_fast_meal_lookup("오늘 중식 중에서 하나 추천해줘"))
+        self.assertFalse(is_fast_meal_lookup("그럼 학생식당은?"))
+        self.assertFalse(is_fast_meal_lookup("오늘이랑 내일 점심 비교해줘"))
+        self.assertEqual(infer_restaurant_codes("학생식당과 교식 메뉴"), ["re11", "re12"])
+        self.assertIsNone(infer_restaurant_codes("오늘 중식 식당별로 정리해줘"))
+
+    def test_fast_lookup_skips_openai_and_uses_cached_meal(self):
+        user = repo.get_or_create_user(self.db, "fast-agent-test")
+        session = repo.get_or_create_active_session(self.db, user)
+        self.db.add(
+            MealFetchLog(
+                restaurant_id=self.restaurant.id,
+                date=date(2026, 9, 2),
+                fetched_at=datetime.now(ZoneInfo("Asia/Seoul")),
+                status="success",
+            )
+        )
+        self.db.commit()
+
+        with patch("app.services.chatbot.OpenAI") as openai, patch(
+            "app.services.meals.cache._schedule_refresh",
+            return_value=True,
+        ):
+            result = MealChatAgent().run_result(self.db, user, session, "9월 2일 학생식당 중식 알려줘")
+
+        openai.assert_not_called()
+        self.assertEqual(result.meals, [self.meal])
+        self.assertEqual(result.agent_steps[1], "fast_meal_lookup:get_meals")
 
     def test_fresh_meal_cache_schedules_non_blocking_image_probe(self):
         now = datetime(2026, 9, 2, 12, 0, tzinfo=ZoneInfo("Asia/Seoul"))
@@ -194,7 +242,7 @@ class EfooAgentTest(unittest.TestCase):
         with patch("app.services.chatbot.OpenAI", return_value=fake_client), patch(
             "app.services.chatbot.settings", fake_settings
         ):
-            result = MealChatAgent().run_result(self.db, user, session, "9월 2일 학생식당 점심 알려줘")
+            result = MealChatAgent().run_result(self.db, user, session, "9월 2일 학생식당 점심 중 추천해줘")
 
         self.assertEqual(responses.create.call_count, 2)
         self.assertEqual(result.presentation, "basic_card")

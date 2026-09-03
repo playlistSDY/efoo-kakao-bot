@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.domain.meal_intent import is_fast_meal_lookup
 from app.schemas.kakao import KakaoRequest
 from app.services.kakao_callback import find_callback_url, send_kakao_callback_response
 from app.services.kakao_chat import create_chat_response
@@ -31,7 +32,7 @@ def kakao_callback(payload: KakaoRequest, background_tasks: BackgroundTasks, db:
         utterance,
     )
 
-    if callback_url:
+    if callback_url and not is_fast_meal_lookup(utterance):
         background_tasks.add_task(
             send_kakao_callback_response,
             callback_url,
