@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 import logging
 from threading import Lock
+from time import monotonic
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,6 +22,8 @@ logger = logging.getLogger(__name__)
 _refresh_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="meal-refresh")
 _scheduled_refreshes: set[tuple[str, date]] = set()
 _scheduled_refreshes_lock = Lock()
+_scheduled_image_refreshes: set[tuple[str, date]] = set()
+_last_image_refresh: dict[tuple[str, date], float] = {}
 
 
 def ensure_fresh_meals(
@@ -46,6 +49,8 @@ def ensure_fresh_meals(
             )
         )
         if fetch_log and now - _normalize_datetime(fetch_log.fetched_at, now) < MEAL_CACHE_TTL:
+            if target_date == now.date():
+                _schedule_image_refresh(restaurant_code, target_date)
             reused.append(restaurant_code)
             logger.info("학식 캐시 사용: restaurant=%s date=%s fetched_at=%s", restaurant_code, target_date, fetch_log.fetched_at)
             continue
@@ -120,6 +125,39 @@ def _refresh_in_background(restaurant_code: str, target_date: date, key: tuple[s
         db.close()
         with _scheduled_refreshes_lock:
             _scheduled_refreshes.discard(key)
+
+
+def _schedule_image_refresh(restaurant_code: str, target_date: date) -> bool:
+    key = (restaurant_code, target_date)
+    refresh_interval = settings.MEAL_IMAGE_REFRESH_MINUTES * 60
+    current = monotonic()
+    with _scheduled_refreshes_lock:
+        if key in _scheduled_image_refreshes:
+            return False
+        if current - _last_image_refresh.get(key, 0) < refresh_interval:
+            return False
+        _scheduled_image_refreshes.add(key)
+    _refresh_executor.submit(_refresh_images_in_background, restaurant_code, target_date, key)
+    return True
+
+
+def _refresh_images_in_background(restaurant_code: str, target_date: date, key: tuple[str, date]) -> None:
+    db = SessionLocal()
+    try:
+        updated = meal_fetcher.refresh_images_for_date(db, target_date, [restaurant_code])
+        logger.info(
+            "학식 이미지 백그라운드 확인 완료: restaurant=%s date=%s updated=%s",
+            restaurant_code,
+            target_date,
+            updated,
+        )
+    except Exception:
+        logger.exception("학식 이미지 백그라운드 확인 실패: restaurant=%s date=%s", restaurant_code, target_date)
+    finally:
+        db.close()
+        with _scheduled_refreshes_lock:
+            _scheduled_image_refreshes.discard(key)
+            _last_image_refresh[key] = monotonic()
 
 
 def get_meal_cache_status(db: Session, target_date: date, now: datetime) -> dict:

@@ -341,7 +341,51 @@ class MealFetcher:
                 raise
         return total_saved
 
+    def refresh_images_for_date(
+        self,
+        db: Session,
+        target_date: date,
+        restaurant_codes: list[str] | None = None,
+    ) -> int:
+        updated = 0
+        for restaurant_code in restaurant_codes or list(settings.RESTAURANT_CODES):
+            restaurant = self._get_or_create_restaurant(
+                db,
+                restaurant_code,
+                settings.RESTAURANT_CODES[restaurant_code],
+            )
+            html_content = self.meal_service.get_meal_html(
+                restaurant_code,
+                target_date.year,
+                target_date.month,
+                target_date.day,
+            )
+            meal_data = self.meal_service.parser.parse_meal_html(html_content)
+            for meal_type in ["조식", "중식", "석식"]:
+                existing_meals = db.scalars(
+                    select(Meal)
+                    .where(
+                        Meal.restaurant_id == restaurant.id,
+                        Meal.date == target_date,
+                        Meal.meal_type == meal_type,
+                    )
+                    .order_by(Meal.id)
+                ).all()
+                for existing, fetched in zip(existing_meals, meal_data.get(meal_type, [])):
+                    source_url = fetched.get("image", "")
+                    if source_url and source_url != existing.image_url:
+                        existing.image_url = source_url
+                        updated += 1
+                        from app.services.meals.image_cache import meal_image_cache
+
+                        meal_image_cache.schedule(source_url)
+        if updated:
+            db.commit()
+        return updated
+
     def _fetch_and_store_single_day(self, db: Session, restaurant: Restaurant, restaurant_code: str, target_date: date) -> int:
+        from app.services.meals.image_cache import meal_image_cache
+
         html_content = self.meal_service.get_meal_html(
             restaurant_code,
             target_date.year,
@@ -369,6 +413,8 @@ class MealFetcher:
 
             updated_existing_ids = set()
             for i, meal_item in enumerate(meals):
+                if meal_item.get("image"):
+                    meal_image_cache.schedule(meal_item["image"])
                 existing_meal = existing_meals[i] if i < len(existing_meals) else None
                 if existing_meal:
                     updated_existing_ids.add(existing_meal.id)

@@ -39,7 +39,7 @@
 
 ## 모델
 
-기본값은 `gpt-5.6-luna`, reasoning effort는 `low`입니다.
+기본값은 `gpt-5.6-luna`입니다. 첫 툴 선택 라운드는 reasoning effort `none`, 툴 결과를 정리하는 후속 라운드는 `low`를 사용합니다.
 
 - 최신 GPT-5.6 계열의 툴 호출과 구조화 출력을 사용합니다.
 - 비용이 중요한 고빈도 챗봇에 맞춘 기본값입니다.
@@ -63,7 +63,9 @@
 - `meal_types`: `조식`, `중식`, `석식` 배열 또는 하루 전체를 뜻하는 `null`
 - `refresh`: 최신 캐시 확인 여부
 
-특정 식당만 요청하면 해당 식당만 크롤링하므로 불필요한 네트워크 요청을 줄입니다. 동일 날짜·식당의 성공한 조회가 30분 이내면 DB 캐시를 재사용합니다.
+특정 식당만 요청하면 해당 식당만 다룹니다. 메뉴 본문 캐시는 3시간 동안 즉시 재사용하고, 만료되면 기존 내용을 먼저 반환한 뒤 백그라운드에서 갱신합니다. DB에 해당 날짜의 조회 기록이 전혀 없는 최초 요청만 동기 크롤링합니다.
+
+오늘 메뉴의 사진은 본문 캐시와 별개로 10분 간격의 백그라운드 확인 작업을 예약합니다. 따라서 메뉴 공개 직후 본문에 사진이 없더라도 이후 요청을 느리게 만들지 않으면서 새 사진을 발견할 수 있습니다.
 
 ### `get_restaurant_info`
 
@@ -90,6 +92,20 @@
 - `quick_replies`: 최대 5개의 후속 질문
 
 서버는 모델이 조회하지 않은 메뉴 ID를 무시하고 카카오 제약에 맞게 길이를 제한합니다. `basic_card`에 이미지 URL이 있으면 이미지 카드가 되고, 없으면 썸네일 없는 일반 카드가 됩니다.
+
+## 이미지 캐시
+
+`PUBLIC_BASE_URL`이 설정되면 카카오에는 학교 원본 주소 대신 다음처럼 우리 도메인의 안정적인 URL을 전달합니다.
+
+```text
+https://chatbot.example.com/media/meals/{sha256-key}
+```
+
+- `*.hanyang.ac.kr` 이미지만 허용해 임의 URL 프록시를 방지합니다.
+- 이미지는 `/data/meal-images`에 백그라운드로 저장됩니다.
+- 다운로드가 아직 끝나지 않았으면 같은 URL에서 검증된 학교 원본으로 잠시 리다이렉트합니다.
+- 캐시가 준비되면 이후 요청은 우리 서버의 파일을 직접 반환합니다.
+- Docker의 기존 `efoo-data` 볼륨을 사용하므로 컨테이너 재생성 후에도 유지됩니다.
 
 ## 실행
 
@@ -122,12 +138,17 @@ cp .env.example .env
 DATABASE_URL=sqlite:////data/efoo_chatbot.db
 OPENAI_API_KEY=sk-your-openai-api-key
 OPENAI_MODEL=gpt-5.6-luna
+OPENAI_TOOL_REASONING_EFFORT=none
 OPENAI_REASONING_EFFORT=low
 OPENAI_MAX_TOOL_ROUNDS=4
 OPENAI_TIMEOUT_SECONDS=15
 AGENT_TIME_BUDGET_SECONDS=40
 MEAL_HTTP_CONNECT_TIMEOUT_SECONDS=2
 MEAL_HTTP_READ_TIMEOUT_SECONDS=5
+PUBLIC_BASE_URL=https://chatbot.example.com
+MEAL_IMAGE_CACHE_DIR=/data/meal-images
+MEAL_IMAGE_MAX_BYTES=10485760
+MEAL_IMAGE_REFRESH_MINUTES=10
 APP_TIMEZONE=Asia/Seoul
 MEAL_FETCH_DAYS_AHEAD=7
 HANYANG_BASE_URL=https://www.hanyang.ac.kr
@@ -190,7 +211,7 @@ app/
   services/chatbot.py          # Responses API 반복 툴 에이전트
   services/chat_tools/tools.py # 날짜별 학식·식당·현재시각 툴
   services/kakao_templates.py  # 카카오 텍스트/카드/캐러셀 렌더러
-  services/meals/              # 크롤러와 30분 캐시
+  services/meals/              # 크롤러, 3시간 본문 캐시, 이미지 캐시
   prompts/system.txt           # 에이전트 정책
   repositories/                # DB 접근
   models/                      # SQLAlchemy 모델

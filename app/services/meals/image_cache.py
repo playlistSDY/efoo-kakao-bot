@@ -31,6 +31,10 @@ class MealImageCache:
         self._scheduled: set[str] = set()
         self._lock = Lock()
 
+    @property
+    def enabled(self) -> bool:
+        return bool(self.public_base_url)
+
     def public_url(self, source_url: str | None) -> str | None:
         if not source_url:
             return None
@@ -41,6 +45,8 @@ class MealImageCache:
         return f"{self.public_base_url}/media/meals/{key}"
 
     def schedule(self, source_url: str) -> bool:
+        if not self.enabled:
+            return False
         if not self._allowed_source(source_url):
             logger.warning("허용되지 않은 학식 이미지 URL 무시: %s", source_url)
             return False

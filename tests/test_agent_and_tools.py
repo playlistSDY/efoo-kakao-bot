@@ -92,6 +92,30 @@ class EfooAgentTest(unittest.TestCase):
         self.assertEqual(status["refreshed"], [])
         schedule.assert_called_once_with("re12", date(2026, 9, 2))
 
+    def test_fresh_meal_cache_schedules_non_blocking_image_probe(self):
+        now = datetime(2026, 9, 2, 12, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+        self.db.add(
+            MealFetchLog(
+                restaurant_id=self.restaurant.id,
+                date=date(2026, 9, 2),
+                fetched_at=now,
+                status="success",
+            )
+        )
+        self.db.commit()
+
+        with patch("app.services.meals.cache._schedule_image_refresh", return_value=True) as schedule:
+            status = ensure_fresh_meals(
+                self.db,
+                date(2026, 9, 2),
+                now,
+                ["re12"],
+                stale_while_revalidate=True,
+            )
+
+        self.assertEqual(status["reused"], ["re12"])
+        schedule.assert_called_once_with("re12", date(2026, 9, 2))
+
     def test_card_without_image_omits_thumbnail(self):
         response = build_kakao_response(
             "오늘 메뉴예요.",

@@ -53,6 +53,7 @@ class Settings:
     PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
     MEAL_IMAGE_CACHE_DIR: str = os.getenv("MEAL_IMAGE_CACHE_DIR", "/data/meal-images")
     MEAL_IMAGE_MAX_BYTES: int = _int_env("MEAL_IMAGE_MAX_BYTES", 10 * 1024 * 1024)
+    MEAL_IMAGE_REFRESH_MINUTES: int = _int_env("MEAL_IMAGE_REFRESH_MINUTES", 10)
     APP_TIMEZONE: str = os.getenv("APP_TIMEZONE", "Asia/Seoul")
     HANYANG_BASE_URL: str = os.getenv("HANYANG_BASE_URL", "https://www.hanyang.ac.kr")
     MEAL_FETCH_DAYS_AHEAD: int = _int_env("MEAL_FETCH_DAYS_AHEAD", 7)
