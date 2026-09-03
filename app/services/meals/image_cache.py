@@ -36,6 +36,12 @@ class MealImageCache:
     def enabled(self) -> bool:
         return bool(self.public_base_url)
 
+    @property
+    def placeholder_url(self) -> str | None:
+        if not self.public_base_url:
+            return None
+        return f"{self.public_base_url}/media/meals/placeholder.png"
+
     def public_url(self, source_url: str | None) -> str | None:
         if is_placeholder_meal_image_url(source_url):
             return None
@@ -163,3 +169,8 @@ meal_image_cache = MealImageCache(
 
 def public_meal_image_url(source_url: str | None) -> str | None:
     return meal_image_cache.public_url(source_url)
+
+
+def public_meal_thumbnail_url(source_url: str | None) -> str | None:
+    """Return a Kakao-safe thumbnail URL, including our local placeholder."""
+    return meal_image_cache.public_url(source_url) or meal_image_cache.placeholder_url

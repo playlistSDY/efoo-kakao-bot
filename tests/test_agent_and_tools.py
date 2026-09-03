@@ -117,14 +117,31 @@ class EfooAgentTest(unittest.TestCase):
         self.assertEqual(status["reused"], ["re12"])
         schedule.assert_called_once_with("re12", date(2026, 9, 2))
 
-    def test_card_without_image_omits_thumbnail(self):
-        response = build_kakao_response(
-            "오늘 메뉴예요.",
-            [self.meal],
-            presentation="basic_card",
-        )
+    @patch(
+        "app.services.kakao_templates.public_meal_thumbnail_url",
+        return_value="https://chatbot.example.com/media/meals/placeholder.png",
+    )
+    def test_card_without_image_uses_own_placeholder(self, _thumbnail):
+        response = build_kakao_response("오늘 메뉴예요.", [self.meal], presentation="basic_card")
         card = response["template"]["outputs"][0]["basicCard"]
-        self.assertNotIn("thumbnail", card)
+        self.assertEqual(
+            card["thumbnail"]["imageUrl"],
+            "https://chatbot.example.com/media/meals/placeholder.png",
+        )
+
+    @patch("app.services.kakao_templates.public_meal_thumbnail_url", return_value=None)
+    def test_card_without_public_image_service_falls_back_to_simple_text(self, _thumbnail):
+        response = build_kakao_response("오늘 메뉴예요.", [self.meal], presentation="basic_card")
+        self.assertEqual(response["template"]["outputs"][0]["simpleText"]["text"], "오늘 메뉴예요.")
+
+    @patch(
+        "app.services.kakao_templates.public_meal_thumbnail_url",
+        return_value="https://chatbot.example.com/media/meals/placeholder.png",
+    )
+    def test_carousel_items_always_include_thumbnail(self, _thumbnail):
+        response = build_kakao_response("오늘 메뉴예요.", [self.meal, self.meal], presentation="carousel")
+        items = response["template"]["outputs"][0]["carousel"]["items"]
+        self.assertTrue(all("thumbnail" in item for item in items))
 
     def test_agent_repeats_until_tool_result_then_uses_structured_plan(self):
         user = repo.get_or_create_user(self.db, "agent-test")
