@@ -158,7 +158,13 @@ class ChatToolExecutor:
         meal_types = _validated_meal_types(arguments.get("meal_types"))
         cache = None
         if arguments.get("refresh", True):
-            cache = ensure_fresh_meals(self.db, target_date, self.now, restaurant_codes)
+            cache = ensure_fresh_meals(
+                self.db,
+                target_date,
+                self.now,
+                restaurant_codes,
+                stale_while_revalidate=True,
+            )
         meals = repo.get_meals_flexible(
             self.db,
             target_date=target_date,

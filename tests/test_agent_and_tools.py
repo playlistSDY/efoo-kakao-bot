@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 from types import SimpleNamespace
 import unittest
@@ -13,9 +13,11 @@ from sqlalchemy.orm import Session
 import app.models  # noqa: F401 - SQLAlchemy 모델 등록
 from app import repositories as repo
 from app.db.base import Base
+from app.models import MealFetchLog
 from app.services.chat_tools import ChatToolExecutor
 from app.services.chatbot import MealChatAgent, _safe_context_mode
 from app.services.kakao_templates import build_kakao_response
+from app.services.meals.cache import ensure_fresh_meals
 
 
 class EfooAgentTest(unittest.TestCase):
@@ -61,6 +63,31 @@ class EfooAgentTest(unittest.TestCase):
         self.assertEqual(output["count"], 1)
         self.assertEqual(output["meals"][0]["menu"], ["제육볶음", "쌀밥"])
         self.assertEqual(executor.selected_meals([self.meal.id]), [self.meal])
+
+    def test_stale_meal_cache_returns_immediately_and_schedules_refresh(self):
+        now = datetime(2026, 9, 2, 12, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+        self.db.add(
+            MealFetchLog(
+                restaurant_id=self.restaurant.id,
+                date=date(2026, 9, 2),
+                fetched_at=now - timedelta(hours=4),
+                status="success",
+            )
+        )
+        self.db.commit()
+
+        with patch("app.services.meals.cache._schedule_refresh", return_value=True) as schedule:
+            status = ensure_fresh_meals(
+                self.db,
+                date(2026, 9, 2),
+                now,
+                ["re12"],
+                stale_while_revalidate=True,
+            )
+
+        self.assertEqual(status["stale_served"], ["re12"])
+        self.assertEqual(status["refreshed"], [])
+        schedule.assert_called_once_with("re12", date(2026, 9, 2))
 
     def test_card_without_image_omits_thumbnail(self):
         response = build_kakao_response(

@@ -1,20 +1,26 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 import logging
+from threading import Lock
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import repositories as repo
 from app.config import settings
-from app.models import MealFetchLog
+from app.db import SessionLocal
+from app.models import Meal, MealFetchLog
 from app.services.meals.fetch_locks import meal_fetch_lock
 from app.services.meals.fetcher import meal_fetcher
 
 
-MEAL_CACHE_TTL = timedelta(minutes=30)
+MEAL_CACHE_TTL = timedelta(hours=3)
 logger = logging.getLogger(__name__)
+_refresh_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="meal-refresh")
+_scheduled_refreshes: set[tuple[str, date]] = set()
+_scheduled_refreshes_lock = Lock()
 
 
 def ensure_fresh_meals(
@@ -22,9 +28,11 @@ def ensure_fresh_meals(
     target_date: date,
     now: datetime,
     restaurant_codes: list[str] | None = None,
+    stale_while_revalidate: bool = False,
 ) -> dict:
     refreshed = []
     reused = []
+    stale_served = []
 
     codes = restaurant_codes or list(settings.RESTAURANT_CODES)
     for restaurant_code in codes:
@@ -40,6 +48,15 @@ def ensure_fresh_meals(
         if fetch_log and now - _normalize_datetime(fetch_log.fetched_at, now) < MEAL_CACHE_TTL:
             reused.append(restaurant_code)
             logger.info("학식 캐시 사용: restaurant=%s date=%s fetched_at=%s", restaurant_code, target_date, fetch_log.fetched_at)
+            continue
+
+        has_cached_result = bool(fetch_log) or db.scalar(
+            select(Meal.id).where(Meal.restaurant_id == restaurant.id, Meal.date == target_date).limit(1)
+        ) is not None
+        if stale_while_revalidate and has_cached_result:
+            _schedule_refresh(restaurant_code, target_date)
+            stale_served.append(restaurant_code)
+            logger.info("만료된 학식 캐시 즉시 제공 후 백그라운드 갱신: restaurant=%s date=%s", restaurant_code, target_date)
             continue
 
         with meal_fetch_lock(restaurant_code, target_date):
@@ -76,8 +93,33 @@ def ensure_fresh_meals(
         "target_date": str(target_date),
         "ttl_minutes": int(MEAL_CACHE_TTL.total_seconds() // 60),
         "reused": reused,
+        "stale_served": stale_served,
         "refreshed": refreshed,
     }
+
+
+def _schedule_refresh(restaurant_code: str, target_date: date) -> bool:
+    key = (restaurant_code, target_date)
+    with _scheduled_refreshes_lock:
+        if key in _scheduled_refreshes:
+            return False
+        _scheduled_refreshes.add(key)
+    _refresh_executor.submit(_refresh_in_background, restaurant_code, target_date, key)
+    return True
+
+
+def _refresh_in_background(restaurant_code: str, target_date: date, key: tuple[str, date]) -> None:
+    db = SessionLocal()
+    try:
+        logger.info("학식 백그라운드 갱신 시작: restaurant=%s date=%s", restaurant_code, target_date)
+        meal_fetcher.fetch_and_store_for_date(db, target_date, [restaurant_code])
+        logger.info("학식 백그라운드 갱신 완료: restaurant=%s date=%s", restaurant_code, target_date)
+    except Exception:
+        logger.exception("학식 백그라운드 갱신 실패: restaurant=%s date=%s", restaurant_code, target_date)
+    finally:
+        db.close()
+        with _scheduled_refreshes_lock:
+            _scheduled_refreshes.discard(key)
 
 
 def get_meal_cache_status(db: Session, target_date: date, now: datetime) -> dict:
