@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 
 from app import repositories as repo
 from app.config import settings
-from app.domain.restaurants import DEFAULT_RESTAURANT_INFO, meal_type_status
+from app.domain.restaurants import (
+    DEFAULT_RESTAURANT_INFO,
+    meal_service_note,
+    meal_service_time,
+    meal_type_status,
+)
 from app.models import Meal
 from app.services.meals.cache import ensure_fresh_meals
 from app.services.meals.image_cache import public_meal_image_url
@@ -31,8 +36,9 @@ CHAT_TOOLS = [
         "type": "function",
         "name": "get_meals",
         "description": (
-            "정확히 한 날짜의 한양대학교 ERICA 학식을 조회한다. 날짜, 식당, 조식/중식/석식을 "
-            "좁혀 조회할 수 있으며 다른 날짜가 필요하면 이 도구를 다시 호출한다. 메뉴 질문에는 추측하지 말고 반드시 사용한다."
+            "정확히 한 날짜의 한양대학교 ERICA 학식과 식당별 제공시간 안내를 조회한다. 날짜, 식당, "
+            "조식/중식/석식을 좁혀 조회할 수 있으며 다른 날짜가 필요하면 이 도구를 다시 호출한다. "
+            "메뉴 질문에는 추측하지 말고 반드시 사용한다."
         ),
         "parameters": {
             "type": "object",
@@ -213,6 +219,12 @@ class ChatToolExecutor:
             "tags": meal.tags or [],
             "price": meal.price,
             "image_url": public_meal_image_url(meal.image_url),
+            "service_time": meal_service_time(restaurant_code, meal.meal_type) if restaurant_code else None,
+            "service_note": (
+                meal_service_note(restaurant_code, meal.meal_type, meal.date, self.now)
+                if restaurant_code
+                else None
+            ),
         }
         if meal.date == self.now.date() and restaurant_code:
             payload["current_status"] = meal_type_status(restaurant_code, meal.meal_type, self.now)

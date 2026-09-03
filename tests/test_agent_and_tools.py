@@ -17,6 +17,7 @@ from app import repositories as repo
 from app.db.base import Base
 from app.domain.meal_images import is_placeholder_meal_image_url, normalize_meal_image_url
 from app.domain.meal_intent import infer_restaurant_codes, is_fast_meal_lookup
+from app.domain.restaurants import meal_service_note
 from app.models import MealFetchLog
 from app.services.chat_tools import ChatToolExecutor
 from app.services.chatbot import MealChatAgent, _safe_context_mode
@@ -67,7 +68,27 @@ class EfooAgentTest(unittest.TestCase):
         self.assertTrue(output["ok"])
         self.assertEqual(output["count"], 1)
         self.assertEqual(output["meals"][0]["menu"], ["제육볶음", "쌀밥"])
+        self.assertEqual(output["meals"][0]["service_time"], "11:30-13:30")
+        self.assertEqual(output["meals"][0]["service_note"], "오늘 중식은 현재 제공 중이며 13:30에 마감해요.")
         self.assertEqual(executor.selected_meals([self.meal.id]), [self.meal])
+
+    def test_meal_service_note_uses_target_date_and_current_time(self):
+        before_lunch = datetime(2026, 9, 2, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+        during_lunch = datetime(2026, 9, 2, 12, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+        after_lunch = datetime(2026, 9, 2, 14, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+
+        self.assertEqual(
+            meal_service_note("re12", "중식", date(2026, 9, 3), before_lunch),
+            "내일 중식은 11:30부터 13:30까지 제공해요.",
+        )
+        self.assertEqual(
+            meal_service_note("re12", "중식", date(2026, 9, 2), during_lunch),
+            "오늘 중식은 현재 제공 중이며 13:30에 마감해요.",
+        )
+        self.assertEqual(
+            meal_service_note("re12", "중식", date(2026, 9, 2), after_lunch),
+            "오늘 중식은 13:30에 마감되었어요.",
+        )
 
     def test_stale_meal_cache_returns_immediately_and_schedules_refresh(self):
         now = datetime(2026, 9, 2, 12, 0, tzinfo=ZoneInfo("Asia/Seoul"))

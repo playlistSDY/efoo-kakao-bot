@@ -3,6 +3,8 @@ from app.domain.restaurants.info import (
     format_open_status_context,
     format_restaurant_context,
     get_restaurant_info,
+    meal_service_note,
+    meal_service_time,
     meal_type_status,
 )
 
@@ -11,5 +13,7 @@ __all__ = [
     "format_open_status_context",
     "format_restaurant_context",
     "get_restaurant_info",
+    "meal_service_note",
+    "meal_service_time",
     "meal_type_status",
 ]

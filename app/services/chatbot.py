@@ -21,6 +21,7 @@ from app.domain.meal_intent import (
     infer_target_date,
     is_fast_meal_lookup,
 )
+from app.domain.restaurants import meal_service_note
 from app.models import ChatSession, Meal, UserProfile
 from app.services.chat_tools import CHAT_TOOLS, ChatToolExecutor
 from app.services.prompt_loader import load_prompt_template
@@ -293,7 +294,7 @@ class MealChatAgent:
         meals = list(executor.seen_meals.values())[:10]
         cache = payload.get("cache") or {}
         cold_scheduled = bool(cache.get("cold_refresh_scheduled"))
-        answer = _fast_meal_answer(meals, target_date, cold_scheduled)
+        answer = _fast_meal_answer(meals, target_date, now, cold_scheduled)
         quick_replies = []
         if cold_scheduled and not meals:
             quick_replies = [
@@ -444,17 +445,33 @@ def _fallback_answer(meals: list[Meal], meal_intent: bool) -> str:
     return "\n".join(lines).strip()
 
 
-def _fast_meal_answer(meals: list[Meal], target_date: date, cold_scheduled: bool) -> str:
+def _fast_meal_answer(
+    meals: list[Meal],
+    target_date: date,
+    now: datetime,
+    cold_scheduled: bool,
+) -> str:
     date_text = f"{target_date.month}월 {target_date.day}일"
     if not meals:
         if cold_scheduled:
             return f"{date_text} 메뉴를 처음 불러오고 있어요.\n잠시 후 ‘다시 조회’를 눌러 주세요."
         return f"{date_text}에는 확인된 메뉴가 없어요."
 
-    lines = [f"{date_text} 메뉴예요.", ""]
+    grouped: dict[tuple[str, str], list[Meal]] = {}
     for meal in meals:
-        restaurant = meal.restaurant.name if meal.restaurant else "식당"
-        menu = ", ".join(meal.korean_name or []) or "메뉴 정보 없음"
-        price = f" ({meal.price})" if meal.price else ""
-        lines.extend([f"{restaurant} · {meal.meal_type}", f"{menu}{price}", ""])
+        restaurant_code = meal.restaurant.code if meal.restaurant else ""
+        grouped.setdefault((restaurant_code, meal.meal_type), []).append(meal)
+
+    lines = [f"{date_text} 메뉴예요.", ""]
+    for (restaurant_code, meal_type), group in grouped.items():
+        restaurant = group[0].restaurant.name if group[0].restaurant else "식당"
+        lines.append(f"{restaurant} · {meal_type}")
+        service_note = meal_service_note(restaurant_code, meal_type, target_date, now)
+        if service_note:
+            lines.append(service_note)
+        for meal in group:
+            menu = ", ".join(meal.korean_name or []) or "메뉴 정보 없음"
+            price = f" ({meal.price})" if meal.price else ""
+            lines.append(f"ㆍ{menu}{price}")
+        lines.append("")
     return "\n".join(lines).strip()

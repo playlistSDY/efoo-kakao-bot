@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import date, datetime, time
 
 
 DEFAULT_RESTAURANT_INFO = {
@@ -98,9 +98,51 @@ def meal_type_status(restaurant_code: str, meal_type: str, now: datetime) -> str
     return f"운영 종료({time_range})"
 
 
+def meal_service_time(restaurant_code: str, meal_type: str) -> str | None:
+    info = get_restaurant_info(restaurant_code)
+    return (info.get("open_times") or {}).get(meal_type)
+
+
+def meal_service_note(
+    restaurant_code: str,
+    meal_type: str,
+    target_date: date,
+    now: datetime,
+) -> str | None:
+    time_range = meal_service_time(restaurant_code, meal_type)
+    if not time_range:
+        return None
+    start, end = _parse_time_range(time_range)
+    if not start or not end:
+        return None
+
+    date_label = _relative_date_label(target_date, now.date())
+    if target_date < now.date():
+        return f"{date_label} {meal_type}은 {start.strftime('%H:%M')}부터 {end.strftime('%H:%M')}까지 제공했어요."
+    if target_date > now.date():
+        return f"{date_label} {meal_type}은 {start.strftime('%H:%M')}부터 {end.strftime('%H:%M')}까지 제공해요."
+    if now.time() < start:
+        return f"오늘 {meal_type}은 {start.strftime('%H:%M')}부터 {end.strftime('%H:%M')}까지 제공해요."
+    if now.time() <= end:
+        return f"오늘 {meal_type}은 현재 제공 중이며 {end.strftime('%H:%M')}에 마감해요."
+    return f"오늘 {meal_type}은 {end.strftime('%H:%M')}에 마감되었어요."
+
+
 def _parse_time_range(time_range: str) -> tuple[time | None, time | None]:
     try:
         start_text, end_text = [part.strip() for part in time_range.split("-", 1)]
         return time.fromisoformat(start_text), time.fromisoformat(end_text)
     except ValueError:
         return None, None
+
+
+def _relative_date_label(target_date: date, today: date) -> str:
+    difference = (target_date - today).days
+    if difference == 1:
+        return "내일"
+    if difference == 2:
+        return "모레"
+    if difference == -1:
+        return "어제"
+    weekdays = "월화수목금토일"
+    return f"{target_date.month}월 {target_date.day}일({weekdays[target_date.weekday()]})"
