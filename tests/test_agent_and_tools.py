@@ -14,7 +14,7 @@ import app.models  # noqa: F401 - SQLAlchemy 모델 등록
 from app import repositories as repo
 from app.db.base import Base
 from app.services.chat_tools import ChatToolExecutor
-from app.services.chatbot import MealChatAgent
+from app.services.chatbot import MealChatAgent, _safe_context_mode
 from app.services.kakao_templates import build_kakao_response
 
 
@@ -187,6 +187,14 @@ class EfooAgentTest(unittest.TestCase):
         self.assertIn("제육볶음을 추천할게요", contents)
         self.assertNotIn("전에 추천한 메뉴 뭐였지?", contents)
         self.assertNotIn("비밀 메뉴", contents)
+
+    def test_context_mode_distinguishes_new_followup_and_recalled(self):
+        self.assertEqual(_safe_context_mode("new", [], "내일 메뉴 알려줘", True), "new")
+        self.assertEqual(_safe_context_mode("new", [], "그건 얼마야?", True), "continuation")
+        self.assertEqual(
+            _safe_context_mode("new", [{"name": "recall_conversation"}], "전에 뭐였지?", True),
+            "recalled",
+        )
 
 
 if __name__ == "__main__":
