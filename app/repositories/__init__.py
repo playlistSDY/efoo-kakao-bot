@@ -1,4 +1,4 @@
-from app.repositories.chats import add_message, get_or_create_active_session, get_recent_messages
+from app.repositories.chats import add_message, get_or_create_active_session, get_recent_messages, get_user_messages
 from app.repositories.meals import (
     create_meal,
     delete_meals_by_date_range,
@@ -31,6 +31,7 @@ __all__ = [
     "get_or_create_restaurant",
     "get_or_create_user",
     "get_recent_messages",
+    "get_user_messages",
     "get_restaurant_by_code",
     "sync_restaurant_info",
     "update_profile_from_text",

@@ -19,7 +19,11 @@ def create_chat_response(db: Session, kakao_user_id: str, utterance: str, raw_pa
         session.id,
         "assistant",
         result.answer,
-        {"presentation": result.presentation, "tool_calls": result.tool_calls},
+        {
+            "presentation": result.presentation,
+            "context_mode": result.context_mode,
+            "tool_calls": result.tool_calls,
+        },
     )
     return build_kakao_response(
         result.answer,

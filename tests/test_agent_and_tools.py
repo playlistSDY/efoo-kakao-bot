@@ -100,6 +100,7 @@ class EfooAgentTest(unittest.TestCase):
                     "presentation": "basic_card",
                     "meal_ids": [self.meal.id],
                     "meal_intent": True,
+                    "context_mode": "new",
                     "quick_replies": [],
                 },
                 ensure_ascii=False,
@@ -138,6 +139,7 @@ class EfooAgentTest(unittest.TestCase):
                     "presentation": "simple_text",
                     "meal_ids": [],
                     "meal_intent": False,
+                    "context_mode": "new",
                     "quick_replies": [],
                 },
                 ensure_ascii=False,
@@ -163,6 +165,28 @@ class EfooAgentTest(unittest.TestCase):
         request = responses.create.call_args.kwargs
         self.assertNotIn("reasoning", request)
         self.assertNotIn("verbosity", request["text"])
+
+    def test_recall_conversation_is_scoped_and_excludes_current_message(self):
+        user = repo.get_or_create_user(self.db, "memory-user")
+        session = repo.get_or_create_active_session(self.db, user)
+        repo.add_message(self.db, session.id, "user", "어제 학생식당 제육 추천해줘")
+        repo.add_message(self.db, session.id, "assistant", "제육볶음을 추천할게요")
+        current = repo.add_message(self.db, session.id, "user", "전에 추천한 메뉴 뭐였지?")
+        other = repo.get_or_create_user(self.db, "other-user")
+        other_session = repo.get_or_create_active_session(self.db, other)
+        repo.add_message(self.db, other_session.id, "assistant", "비밀 메뉴")
+        executor = ChatToolExecutor(
+            self.db,
+            user_id=user.id,
+            excluded_message_ids={current.id},
+        )
+
+        output = json.loads(executor.execute("recall_conversation", {"query": "추천 메뉴", "limit": 6}))
+
+        contents = [message["content"] for message in output["messages"]]
+        self.assertIn("제육볶음을 추천할게요", contents)
+        self.assertNotIn("전에 추천한 메뉴 뭐였지?", contents)
+        self.assertNotIn("비밀 메뉴", contents)
 
 
 if __name__ == "__main__":

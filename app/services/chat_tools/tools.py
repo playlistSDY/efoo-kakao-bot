@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 import json
+import re
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -74,6 +75,32 @@ CHAT_TOOLS = [
         },
         "strict": True,
     },
+    {
+        "type": "function",
+        "name": "recall_conversation",
+        "description": (
+            "현재 메시지가 이전 대화에 의존할 때만 사용자의 과거 대화를 불러온다. '그거', '아까', '전에', "
+            "'다른 곳은?' 같은 후속 표현이나 과거 추천을 명시적으로 물을 때 사용한다. 독립적인 새 질문에는 사용하지 않는다."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": ["string", "null"],
+                    "description": "찾을 주제의 짧은 핵심어. 단순히 직전 대화가 필요하면 null",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 12,
+                    "description": "반환할 최대 메시지 수",
+                },
+            },
+            "required": ["query", "limit"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
 ]
 
 
@@ -81,6 +108,8 @@ CHAT_TOOLS = [
 class ChatToolExecutor:
     db: Session
     now: datetime = field(default_factory=lambda: datetime.now(ZoneInfo(settings.APP_TIMEZONE)))
+    user_id: int | None = None
+    excluded_message_ids: set[int] = field(default_factory=set)
     seen_meals: dict[int, Meal] = field(default_factory=dict)
 
     def execute(self, name: str, arguments: dict[str, Any]) -> str:
@@ -91,6 +120,8 @@ class ChatToolExecutor:
                 result = self._get_meals(arguments)
             elif name == "get_restaurant_info":
                 result = self._get_restaurant_info(arguments)
+            elif name == "recall_conversation":
+                result = self._recall_conversation(arguments)
             else:
                 result = {"ok": False, "error": f"알 수 없는 도구: {name}"}
         except (TypeError, ValueError) as exc:
@@ -179,6 +210,33 @@ class ChatToolExecutor:
             payload["current_status"] = meal_type_status(restaurant_code, meal.meal_type, self.now)
         return payload
 
+    def _recall_conversation(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.user_id is None:
+            return {"ok": False, "error": "사용자 대화 범위를 확인할 수 없습니다."}
+        limit = max(2, min(int(arguments.get("limit", 6)), 12))
+        query = str(arguments.get("query") or "").strip()
+        messages = repo.get_user_messages(
+            self.db,
+            self.user_id,
+            limit=100,
+            exclude_message_ids=self.excluded_message_ids,
+        )
+        selected = _select_relevant_messages(messages, query, limit)
+        return {
+            "ok": True,
+            "query": query or None,
+            "count": len(selected),
+            "messages": [
+                {
+                    "message_id": message.id,
+                    "role": message.role,
+                    "content": message.content,
+                    "created_at": message.created_at.isoformat() if message.created_at else None,
+                }
+                for message in selected
+            ],
+        }
+
 
 def _validated_restaurant_codes(value: Any) -> list[str] | None:
     if value is None:
@@ -200,3 +258,24 @@ def _validated_meal_types(value: Any) -> list[str] | None:
     if invalid:
         raise ValueError(f"지원하지 않는 식사 종류: {', '.join(invalid)}")
     return list(dict.fromkeys(value)) or None
+
+
+def _select_relevant_messages(messages: list, query: str, limit: int) -> list:
+    if not query:
+        return messages[-limit:]
+    keywords = [token for token in re.findall(r"[0-9A-Za-z가-힣]+", query.lower()) if len(token) >= 2]
+    if not keywords:
+        return messages[-limit:]
+    scored = []
+    for index, message in enumerate(messages):
+        content = message.content.lower()
+        score = sum(1 for keyword in keywords if keyword in content)
+        if score:
+            scored.append((score, index, message))
+    if not scored:
+        return messages[-limit:]
+    selected_ids = {
+        message.id
+        for _, _, message in sorted(scored, key=lambda item: (item[0], item[1]), reverse=True)[:limit]
+    }
+    return [message for message in messages if message.id in selected_ids][-limit:]

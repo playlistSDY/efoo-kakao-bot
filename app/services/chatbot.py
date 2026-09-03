@@ -22,6 +22,7 @@ from app.services.prompt_loader import load_prompt_template
 
 logger = logging.getLogger(__name__)
 Presentation = Literal["simple_text", "basic_card", "carousel"]
+ContextMode = Literal["new", "continuation", "recalled"]
 
 
 class AgentTimeBudgetExceeded(RuntimeError):
@@ -38,6 +39,7 @@ KAKAO_RESPONSE_FORMAT = {
             "presentation": {"type": "string", "enum": ["simple_text", "basic_card", "carousel"]},
             "meal_ids": {"type": "array", "items": {"type": "integer"}},
             "meal_intent": {"type": "boolean"},
+            "context_mode": {"type": "string", "enum": ["new", "continuation", "recalled"]},
             "quick_replies": {
                 "type": "array",
                 "items": {
@@ -51,7 +53,7 @@ KAKAO_RESPONSE_FORMAT = {
                 },
             },
         },
-        "required": ["message", "presentation", "meal_ids", "meal_intent", "quick_replies"],
+        "required": ["message", "presentation", "meal_ids", "meal_intent", "context_mode", "quick_replies"],
         "additionalProperties": False,
     },
 }
@@ -63,6 +65,7 @@ class AgentResult:
     presentation: Presentation = "simple_text"
     meals: list[Meal] = field(default_factory=list)
     meal_intent: bool = False
+    context_mode: ContextMode = "new"
     quick_replies: list[dict[str, str]] = field(default_factory=list)
     tool_calls: list[dict] = field(default_factory=list)
     agent_steps: list[str] = field(default_factory=list)
@@ -75,11 +78,17 @@ class MealChatAgent:
     def run_result(self, db: Session, user: UserProfile, session: ChatSession, user_text: str) -> AgentResult:
         now = datetime.now(ZoneInfo(settings.APP_TIMEZONE))
         repo.update_profile_from_text(db, user, user_text)
-        executor = ChatToolExecutor(db=db, now=now)
+        history = repo.get_recent_messages(db, session.id)
+        current_message_id = _current_message_id(history, user_text)
+        executor = ChatToolExecutor(
+            db=db,
+            now=now,
+            user_id=user.id,
+            excluded_message_ids={current_message_id} if current_message_id else set(),
+        )
         if not settings.OPENAI_API_KEY:
             return self._fallback(user_text, now, executor, "OPENAI_API_KEY 미설정", refresh_if_empty=True)
 
-        history = repo.get_recent_messages(db, session.id)
         input_items: list = [
             {
                 "role": "user",
@@ -112,7 +121,14 @@ class MealChatAgent:
                 input_items += response.output
                 function_calls = [item for item in response.output if item.type == "function_call"]
                 if not function_calls:
-                    return self._parse_result(response.output_text, executor, tool_calls, round_number)
+                    return self._parse_result(
+                        response.output_text,
+                        executor,
+                        tool_calls,
+                        round_number,
+                        user_text,
+                        bool(history[:-1] if current_message_id else history),
+                    )
 
                 for call in function_calls:
                     self._check_deadline(deadline)
@@ -152,6 +168,7 @@ class MealChatAgent:
             "presentation": result.presentation,
             "meals": result.meals,
             "quick_replies": result.quick_replies,
+            "context_mode": result.context_mode,
             "lookup": {
                 "target_date": str(target_date),
                 "meal_count": len(result.meals),
@@ -168,6 +185,8 @@ class MealChatAgent:
         executor: ChatToolExecutor,
         tool_calls: list[dict],
         round_number: int,
+        user_text: str,
+        has_prior_history: bool,
     ) -> AgentResult:
         payload = json.loads(output_text)
         meal_ids = [meal_id for meal_id in payload.get("meal_ids", []) if isinstance(meal_id, int)]
@@ -178,6 +197,12 @@ class MealChatAgent:
             presentation=presentation,
             meals=meals,
             meal_intent=bool(payload.get("meal_intent")),
+            context_mode=_safe_context_mode(
+                str(payload.get("context_mode", "new")),
+                tool_calls,
+                user_text,
+                has_prior_history,
+            ),
             quick_replies=_sanitize_quick_replies(payload.get("quick_replies", [])),
             tool_calls=tool_calls,
             agent_steps=["remember_user", f"agent_tool_loop:{round_number}", "plan_kakao_response"],
@@ -235,10 +260,10 @@ class MealChatAgent:
             raise AgentTimeBudgetExceeded
 
     def _build_user_context(self, user: UserProfile, user_text: str, now: datetime, history: list) -> str:
-        recent_history = history[-12:]
+        recent_history = history[-5:]
         if recent_history and recent_history[-1].role == "user" and recent_history[-1].content == user_text:
             recent_history = recent_history[:-1]
-        history_text = "\n".join(f"{message.role}: {message.content}" for message in recent_history) or "없음"
+        history_text = "\n".join(f"{message.role}: {message.content}" for message in recent_history[-4:]) or "없음"
         profile = (
             f"알레르기={user.allergies or []}, 선호={user.preferences or []}, "
             f"비선호={user.dislikes or []}, 예산상한={user.budget_limit or '없음'}, 메모={user.extra_notes or '없음'}"
@@ -246,7 +271,8 @@ class MealChatAgent:
         return (
             f"현재 서버 시각: {now.isoformat()} ({settings.APP_TIMEZONE})\n"
             f"사용자 기록: {profile}\n"
-            f"최근 대화:\n{history_text}\n\n"
+            "직전 대화 힌트(현재 질문이 후속 질문일 때만 사용):\n"
+            f"{history_text}\n\n"
             f"이번 사용자 메시지: {user_text}"
         )
 
@@ -265,6 +291,44 @@ def _parse_tool_arguments(raw: str) -> dict:
 def _supports_reasoning_options(model: str) -> bool:
     normalized = model.lower()
     return normalized.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
+def _current_message_id(history: list, user_text: str) -> int | None:
+    if history and history[-1].role == "user" and history[-1].content == user_text:
+        return history[-1].id
+    return None
+
+
+def _safe_context_mode(
+    value: str,
+    tool_calls: list[dict],
+    user_text: str,
+    has_prior_history: bool,
+) -> ContextMode:
+    recalled = any(call.get("name") == "recall_conversation" for call in tool_calls)
+    if recalled:
+        return "recalled"
+    contextual_markers = (
+        "그거",
+        "그건",
+        "그게",
+        "그 메뉴",
+        "그 식당",
+        "거기",
+        "방금",
+        "아까",
+        "그러면",
+        "그럼",
+        "다른 곳",
+        "다른 메뉴",
+        "더 싼",
+        "더 비싼",
+        "말한",
+        "뭐였",
+    )
+    if has_prior_history and (value == "continuation" or any(marker in user_text for marker in contextual_markers)):
+        return "continuation"
+    return "new"
 
 
 def _safe_presentation(value: str, meals: list[Meal]) -> Presentation:

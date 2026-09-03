@@ -37,3 +37,16 @@ def get_recent_messages(db: Session, session_id: int, limit: int = 12) -> list[C
         .limit(limit)
     ).all()
     return list(reversed(rows))
+
+
+def get_user_messages(
+    db: Session,
+    user_id: int,
+    limit: int = 100,
+    exclude_message_ids: set[int] | None = None,
+) -> list[ChatMessage]:
+    stmt = select(ChatMessage).join(ChatSession, ChatMessage.session_id == ChatSession.id).where(ChatSession.user_id == user_id)
+    if exclude_message_ids:
+        stmt = stmt.where(ChatMessage.id.not_in(exclude_message_ids))
+    stmt = stmt.order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc()).limit(limit)
+    return list(reversed(db.scalars(stmt).all()))

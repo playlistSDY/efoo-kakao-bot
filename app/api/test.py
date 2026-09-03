@@ -29,6 +29,7 @@ def test_chat(message: str = "오늘 점심 추천해줘", user_id: str = "test-
         "agent_steps": result.agent_steps,
         "tool_calls": result.tool_calls,
         "presentation": result.presentation,
+        "context_mode": result.context_mode,
         "quick_replies": result.quick_replies,
         "answer": result.answer,
         "kakao_response": build_kakao_response(
