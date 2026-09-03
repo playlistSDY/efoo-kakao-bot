@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from urllib3 import poolmanager
 
 from app.config import settings
+from app.domain.meal_images import normalize_meal_image_url
 from app.models import Meal, MealFetchLog, Restaurant
 from app.domain.restaurants import get_restaurant_info
 
@@ -162,8 +163,7 @@ class HTMLParser:
             if link:
                 image_url = link.get("href", "").strip()
 
-        if image_url.startswith("/"):
-            image_url = "https://www.hanyang.ac.kr" + image_url
+        image_url = normalize_meal_image_url(image_url, settings.HANYANG_BASE_URL)
 
         korean_name = self._split_to_list(menu_text)
         if not self._is_valid_menu_list(korean_name):
@@ -421,7 +421,8 @@ class MealFetcher:
                     existing_meal.korean_name = meal_item.get("korean", [])
                     existing_meal.tags = meal_item.get("tags", [])
                     existing_meal.price = meal_item.get("price", "")
-                    existing_meal.image_url = meal_item.get("image", "")
+                    if meal_item.get("image"):
+                        existing_meal.image_url = meal_item["image"]
                     existing_meal.day_of_week = meal_data.get("day_of_week", "")
                 else:
                     db.add(

@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import requests
 
 from app.config import settings
+from app.domain.meal_images import is_placeholder_meal_image_url
 
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class MealImageCache:
         return bool(self.public_base_url)
 
     def public_url(self, source_url: str | None) -> str | None:
-        if not source_url:
+        if is_placeholder_meal_image_url(source_url):
             return None
         if not self.public_base_url or not self._allowed_source(source_url):
             return source_url
@@ -46,6 +47,8 @@ class MealImageCache:
 
     def schedule(self, source_url: str) -> bool:
         if not self.enabled:
+            return False
+        if is_placeholder_meal_image_url(source_url):
             return False
         if not self._allowed_source(source_url):
             logger.warning("허용되지 않은 학식 이미지 URL 무시: %s", source_url)
@@ -140,6 +143,8 @@ class MealImageCache:
             return {}
 
     def _allowed_source(self, source_url: str) -> bool:
+        if is_placeholder_meal_image_url(source_url):
+            return False
         parsed = urlparse(source_url)
         hostname = (parsed.hostname or "").lower()
         return parsed.scheme in {"http", "https"} and (hostname == "hanyang.ac.kr" or hostname.endswith(".hanyang.ac.kr"))

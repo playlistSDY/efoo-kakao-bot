@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 import app.models  # noqa: F401 - SQLAlchemy 모델 등록
 from app import repositories as repo
 from app.db.base import Base
+from app.domain.meal_images import is_placeholder_meal_image_url, normalize_meal_image_url
 from app.models import MealFetchLog
 from app.services.chat_tools import ChatToolExecutor
 from app.services.chatbot import MealChatAgent, _safe_context_mode
@@ -266,6 +267,15 @@ class EfooAgentTest(unittest.TestCase):
             schedule.assert_called_once_with(source)
             self.assertEqual(cache.public_url("https://evil.example/image.jpg"), "https://evil.example/image.jpg")
             self.assertFalse(Path(directory, "unexpected.bin").exists())
+
+    def test_school_no_image_placeholder_is_never_exposed_or_cached(self):
+        placeholder = "https://www.hanyang.ac.kr/o/hyu_cafe-web/images/cafe/no-img.png"
+        self.assertTrue(is_placeholder_meal_image_url(placeholder))
+        self.assertEqual(normalize_meal_image_url(placeholder, "https://www.hanyang.ac.kr"), "")
+        with TemporaryDirectory() as directory:
+            cache = MealImageCache(directory, "https://bot.example.com", 1024)
+            self.assertIsNone(cache.public_url(placeholder))
+            self.assertFalse(cache.schedule(placeholder))
 
 
 if __name__ == "__main__":
