@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -18,6 +20,7 @@ from app.services.chat_tools import ChatToolExecutor
 from app.services.chatbot import MealChatAgent, _safe_context_mode
 from app.services.kakao_templates import build_kakao_response
 from app.services.meals.cache import ensure_fresh_meals
+from app.services.meals.image_cache import MealImageCache
 
 
 class EfooAgentTest(unittest.TestCase):
@@ -139,6 +142,7 @@ class EfooAgentTest(unittest.TestCase):
             APP_TIMEZONE="Asia/Seoul",
             OPENAI_API_KEY="test-key",
             OPENAI_MODEL="gpt-5.6-luna",
+            OPENAI_TOOL_REASONING_EFFORT="none",
             OPENAI_REASONING_EFFORT="low",
             OPENAI_MAX_TOOL_ROUNDS=8,
             OPENAI_TIMEOUT_SECONDS=15,
@@ -154,6 +158,9 @@ class EfooAgentTest(unittest.TestCase):
         self.assertEqual(result.presentation, "basic_card")
         self.assertEqual(result.meals, [self.meal])
         self.assertEqual(result.tool_calls[0]["name"], "get_meals")
+        requests = responses.create.call_args_list
+        self.assertEqual(requests[0].kwargs["reasoning"]["effort"], "none")
+        self.assertEqual(requests[1].kwargs["reasoning"]["effort"], "low")
 
     def test_legacy_model_does_not_receive_reasoning_options(self):
         user = repo.get_or_create_user(self.db, "legacy-model-test")
@@ -178,6 +185,7 @@ class EfooAgentTest(unittest.TestCase):
             APP_TIMEZONE="Asia/Seoul",
             OPENAI_API_KEY="test-key",
             OPENAI_MODEL="gpt-4o-mini",
+            OPENAI_TOOL_REASONING_EFFORT="none",
             OPENAI_REASONING_EFFORT="low",
             OPENAI_MAX_TOOL_ROUNDS=4,
             OPENAI_TIMEOUT_SECONDS=15,
@@ -222,6 +230,18 @@ class EfooAgentTest(unittest.TestCase):
             _safe_context_mode("new", [{"name": "recall_conversation"}], "전에 뭐였지?", True),
             "recalled",
         )
+
+    def test_image_cache_returns_stable_own_domain_url(self):
+        with TemporaryDirectory() as directory:
+            cache = MealImageCache(directory, "https://bot.example.com/", 1024)
+            source = "https://www.hanyang.ac.kr/image/menu.jpg"
+            with patch.object(cache, "schedule", return_value=True) as schedule:
+                public_url = cache.public_url(source)
+
+            self.assertEqual(public_url, f"https://bot.example.com/media/meals/{cache.key_for(source)}")
+            schedule.assert_called_once_with(source)
+            self.assertEqual(cache.public_url("https://evil.example/image.jpg"), "https://evil.example/image.jpg")
+            self.assertFalse(Path(directory, "unexpected.bin").exists())
 
 
 if __name__ == "__main__":

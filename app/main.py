@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import health, kakao, test
+from app.api import health, kakao, media, test
 from app.db import init_db
 
 
@@ -17,4 +17,5 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Efoo 학식 추천 카카오톡 챗봇", lifespan=lifespan)
 app.include_router(health.router)
 app.include_router(kakao.router)
+app.include_router(media.router)
 app.include_router(test.router)

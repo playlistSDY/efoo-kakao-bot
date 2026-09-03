@@ -115,7 +115,12 @@ class MealChatAgent:
                     "safety_identifier": _safety_identifier(user.kakao_user_id),
                 }
                 if _supports_reasoning_options(settings.OPENAI_MODEL):
-                    request_options["reasoning"] = {"effort": settings.OPENAI_REASONING_EFFORT}
+                    effort = (
+                        settings.OPENAI_TOOL_REASONING_EFFORT
+                        if round_number == 1
+                        else settings.OPENAI_REASONING_EFFORT
+                    )
+                    request_options["reasoning"] = {"effort": effort}
                     request_options["text"]["verbosity"] = "low"
                 response = client.responses.create(**request_options)
                 input_items += response.output

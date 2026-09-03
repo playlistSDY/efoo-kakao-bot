@@ -14,6 +14,7 @@ from app.config import settings
 from app.domain.restaurants import DEFAULT_RESTAURANT_INFO, meal_type_status
 from app.models import Meal
 from app.services.meals.cache import ensure_fresh_meals
+from app.services.meals.image_cache import public_meal_image_url
 
 
 MEAL_TYPES = {"조식", "중식", "석식"}
@@ -210,7 +211,7 @@ class ChatToolExecutor:
             "menu": meal.korean_name or [],
             "tags": meal.tags or [],
             "price": meal.price,
-            "image_url": meal.image_url,
+            "image_url": public_meal_image_url(meal.image_url),
         }
         if meal.date == self.now.date() and restaurant_code:
             payload["current_status"] = meal_type_status(restaurant_code, meal.meal_type, self.now)

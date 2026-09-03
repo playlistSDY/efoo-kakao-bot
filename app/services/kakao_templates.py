@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.models import Meal
+from app.services.meals.image_cache import public_meal_image_url
 
 
 SIMPLE_TEXT_LIMIT = 1000
@@ -52,8 +53,9 @@ def _basic_card(answer: str, meal: Meal, quick_replies: list[dict] | None = None
         "title": _limit(_meal_title(meal), CARD_TITLE_LIMIT),
         "description": _limit(_meal_description(meal), CARD_DESCRIPTION_LIMIT),
     }
-    if meal.image_url:
-        card["thumbnail"] = {"imageUrl": meal.image_url}
+    image_url = public_meal_image_url(meal.image_url)
+    if image_url:
+        card["thumbnail"] = {"imageUrl": image_url}
     return _with_quick_replies(
         {
             "version": "2.0",
@@ -82,8 +84,9 @@ def _carousel(answer: str, meals: list[Meal], quick_replies: list[dict] | None =
             "title": _limit(_meal_title(meal), CARD_TITLE_LIMIT),
             "description": _limit(_meal_card_description(meal), CARD_DESCRIPTION_LIMIT),
         }
-        if meal.image_url:
-            item["thumbnail"] = {"imageUrl": meal.image_url}
+        image_url = public_meal_image_url(meal.image_url)
+        if image_url:
+            item["thumbnail"] = {"imageUrl": image_url}
         items.append(item)
 
     return _with_quick_replies(
