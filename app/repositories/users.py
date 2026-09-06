@@ -12,7 +12,13 @@ def get_or_create_user(db: Session, kakao_user_id: str) -> UserProfile:
     user = db.scalar(select(UserProfile).where(UserProfile.kakao_user_id == kakao_user_id))
     if user:
         return user
-    user = UserProfile(kakao_user_id=kakao_user_id, allergies=[], preferences=[], dislikes=[])
+    user = UserProfile(
+        kakao_user_id=kakao_user_id,
+        allergies=[],
+        preferences=[],
+        dislikes=[],
+        conversation_preferences=[],
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -65,6 +71,34 @@ def save_user_memory(
         else:
             raise ValueError("메모 기억에는 add, remove, clear 작업을 사용할 수 있습니다.")
         user.extra_notes = "\n".join(notes) or None
+    elif category == "nickname":
+        if action == "clear":
+            user.nickname = None
+        elif action == "set":
+            nickname = _clean_memory_value(value)[:40]
+            if not nickname:
+                raise ValueError("호칭으로 저장할 이름이 필요합니다.")
+            user.nickname = nickname
+        else:
+            raise ValueError("호칭 기억에는 set 또는 clear 작업을 사용할 수 있습니다.")
+    elif category == "speech_style":
+        if action == "clear":
+            user.speech_style = None
+        elif action == "set" and value in {"casual", "polite"}:
+            user.speech_style = value
+        else:
+            raise ValueError("말투는 casual 또는 polite로 설정하거나 clear할 수 있습니다.")
+    elif category == "conversation_preference":
+        values = list(user.conversation_preferences or [])
+        cleaned = _clean_memory_value(value)
+        if action == "add" and cleaned:
+            user.conversation_preferences = _merge_list(values, [cleaned])
+        elif action == "remove" and cleaned:
+            user.conversation_preferences = [item for item in values if item != cleaned]
+        elif action == "clear":
+            user.conversation_preferences = []
+        else:
+            raise ValueError("대화 설정에는 add, remove, clear 작업을 사용할 수 있습니다.")
     else:
         raise ValueError(f"지원하지 않는 사용자 기억 분류: {category}")
 

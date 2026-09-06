@@ -22,6 +22,9 @@ class UserProfile(Base):
     dislikes: Mapped[list[str]] = mapped_column(JSON, default=list)
     budget_limit: Mapped[int | None] = mapped_column(nullable=True)
     extra_notes: Mapped[str | None] = mapped_column(Text)
+    nickname: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    speech_style: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    conversation_preferences: Mapped[list[str] | None] = mapped_column(JSON, default=list, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

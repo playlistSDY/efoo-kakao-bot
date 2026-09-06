@@ -112,22 +112,33 @@ CHAT_TOOLS = [
         "type": "function",
         "name": "save_user_memory",
         "description": (
-            "사용자가 명확히 밝힌 장기적인 식사 관련 정보만 프로필 DB에 저장·수정·삭제한다. "
-            "알레르기, 반복되는 선호/비선호, 평소 예산, 식사 관련 메모에 사용한다. 오늘 한 번만의 요구는 저장하지 않는다."
+            "사용자가 명확히 밝힌 장기 기억을 프로필 DB에 저장·수정·삭제한다. 알레르기, 반복되는 "
+            "선호/비선호, 평소 예산, 식사 메모뿐 아니라 사용자를 부를 호칭, 반말/존댓말, 답변 방식에도 사용한다. "
+            "오늘 한 번만의 요구는 저장하지 않는다."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "category": {
                     "type": "string",
-                    "enum": ["allergy", "preference", "dislike", "budget", "note"],
+                    "enum": [
+                        "allergy",
+                        "preference",
+                        "dislike",
+                        "budget",
+                        "note",
+                        "nickname",
+                        "speech_style",
+                        "conversation_preference",
+                    ],
                 },
                 "action": {"type": "string", "enum": ["add", "remove", "set", "clear"]},
                 "value": {
                     "type": ["string", "null"],
                     "description": (
                         "저장하거나 삭제할 짧은 값. 선호/비선호/알레르기는 '매운 음식', '오이', '땅콩'처럼 "
-                        "분류 표현을 뺀 핵심 명사만 쓴다. 전체 삭제(clear)라면 null"
+                        "분류 표현을 뺀 핵심 명사만 쓴다. nickname은 사용자가 불리길 원하는 호칭을 그대로 쓰고, "
+                        "speech_style은 casual 또는 polite만 쓴다. 전체 삭제(clear)라면 null"
                     ),
                 },
             },
@@ -308,6 +319,9 @@ class ChatToolExecutor:
                 "dislikes": user.dislikes or [],
                 "budget_limit": user.budget_limit,
                 "notes": [line for line in (user.extra_notes or "").splitlines() if line.strip()],
+                "nickname": user.nickname,
+                "speech_style": user.speech_style,
+                "conversation_preferences": user.conversation_preferences or [],
             },
         }
 

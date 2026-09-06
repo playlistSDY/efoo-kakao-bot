@@ -168,6 +168,12 @@ def is_fast_meal_lookup(text: str) -> bool:
         "못 먹",
         "기억해",
         "앞으로",
+        "반말",
+        "존댓말",
+        "말투",
+        "닉네임",
+        "호칭",
+        "불러줘",
     )
     restaurant_info_markers = ("운영시간", "몇시", "몇 시", "위치", "어디", "열어", "닫아", "마감")
     if any(marker in normalized for marker in contextual_markers + judgment_markers + restaurant_info_markers):

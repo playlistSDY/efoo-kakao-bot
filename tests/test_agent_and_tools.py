@@ -9,12 +9,13 @@ import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 import app.models  # noqa: F401 - SQLAlchemy 모델 등록
 from app import repositories as repo
 from app.db.base import Base
+from app.db.init import ensure_user_profile_columns
 from app.domain.meal_images import is_placeholder_meal_image_url, normalize_meal_image_url
 from app.domain.meal_intent import infer_restaurant_codes, is_fast_meal_lookup
 from app.domain.restaurants import meal_service_note
@@ -94,10 +95,35 @@ class EfooAgentTest(unittest.TestCase):
                 {"category": "note", "action": "add", "value": "채식 메뉴를 우선 추천"},
             )
         )
+        nickname = json.loads(
+            executor.execute(
+                "save_user_memory",
+                {"category": "nickname", "action": "set", "value": "스디야"},
+            )
+        )
+        speech_style = json.loads(
+            executor.execute(
+                "save_user_memory",
+                {"category": "speech_style", "action": "set", "value": "casual"},
+            )
+        )
+        conversation_preference = json.loads(
+            executor.execute(
+                "save_user_memory",
+                {
+                    "category": "conversation_preference",
+                    "action": "add",
+                    "value": "답변은 짧게",
+                },
+            )
+        )
 
         self.assertTrue(preference["ok"])
         self.assertEqual(budget["profile"]["budget_limit"], 7000)
         self.assertIn("채식 메뉴를 우선 추천", note["profile"]["notes"])
+        self.assertEqual(nickname["profile"]["nickname"], "스디야")
+        self.assertEqual(speech_style["profile"]["speech_style"], "casual")
+        self.assertEqual(conversation_preference["profile"]["conversation_preferences"], ["답변은 짧게"])
         self.db.refresh(user)
         self.assertEqual(user.preferences, ["매운 음식"])
 
@@ -109,11 +135,29 @@ class EfooAgentTest(unittest.TestCase):
         )
         self.assertEqual(removed["profile"]["preferences"], [])
 
+    def test_existing_user_table_gets_conversation_memory_columns(self):
+        legacy_engine = create_engine("sqlite:///:memory:")
+        with legacy_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE user_profiles ("
+                    "id INTEGER PRIMARY KEY, kakao_user_id VARCHAR(128) NOT NULL)"
+                )
+            )
+
+        ensure_user_profile_columns(legacy_engine)
+
+        columns = {column["name"] for column in inspect(legacy_engine).get_columns("user_profiles")}
+        self.assertTrue({"nickname", "speech_style", "conversation_preferences"}.issubset(columns))
+        legacy_engine.dispose()
+
     def test_saved_profile_is_always_in_agent_context(self):
         user = repo.get_or_create_user(self.db, "profile-context-test")
         repo.save_user_memory(self.db, user, "allergy", "add", "땅콩")
         repo.save_user_memory(self.db, user, "dislike", "add", "오이")
         repo.save_user_memory(self.db, user, "budget", "set", "8000원")
+        repo.save_user_memory(self.db, user, "nickname", "set", "스디야")
+        repo.save_user_memory(self.db, user, "speech_style", "set", "casual")
         session = repo.get_or_create_active_session(self.db, user)
 
         context = MealChatAgent()._build_user_context(
@@ -126,6 +170,8 @@ class EfooAgentTest(unittest.TestCase):
         self.assertIn("알레르기=['땅콩']", context)
         self.assertIn("비선호=['오이']", context)
         self.assertIn("예산상한=8000", context)
+        self.assertIn("호칭=스디야", context)
+        self.assertIn("말투=casual", context)
 
     def test_meal_service_note_uses_target_date_and_current_time(self):
         before_lunch = datetime(2026, 9, 2, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
@@ -230,6 +276,8 @@ class EfooAgentTest(unittest.TestCase):
         repo.save_user_memory(self.db, user, "preference", "add", "매운 음식")
         repo.save_user_memory(self.db, user, "dislike", "add", "오이")
         repo.save_user_memory(self.db, user, "budget", "set", "7000원")
+        repo.save_user_memory(self.db, user, "nickname", "set", "스디야")
+        repo.save_user_memory(self.db, user, "speech_style", "set", "casual")
 
         answer = _fast_meal_answer(
             [self.meal],
@@ -240,7 +288,13 @@ class EfooAgentTest(unittest.TestCase):
         )
 
         self.assertIn("⚠️ 알레르기 기록: 땅콩", answer)
-        self.assertIn("👤 내 설정 · 선호: 매운 음식 · 비선호: 오이 · 예산: 7,000원 이하", answer)
+        self.assertIn("🍽 스디야, 9월 2일 메뉴", answer)
+        self.assertIn("성분은 식당에 확인해 줘.", answer)
+        self.assertIn("지금 제공 중이고 13:30에 마감해.", answer)
+        self.assertIn(
+            "👤 내 설정 · 선호: 매운 음식 · 비선호: 오이 · 예산: 7,000원 이하 · 호칭: 스디야 · 말투: 반말",
+            answer,
+        )
 
     def test_fast_lookup_skips_openai_and_uses_cached_meal(self):
         user = repo.get_or_create_user(self.db, "fast-agent-test")

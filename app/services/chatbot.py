@@ -326,7 +326,9 @@ class MealChatAgent:
         history_text = "\n".join(f"{message.role}: {message.content}" for message in recent_history[-4:]) or "없음"
         profile = (
             f"알레르기={user.allergies or []}, 선호={user.preferences or []}, "
-            f"비선호={user.dislikes or []}, 예산상한={user.budget_limit or '없음'}, 메모={user.extra_notes or '없음'}"
+            f"비선호={user.dislikes or []}, 예산상한={user.budget_limit or '없음'}, 메모={user.extra_notes or '없음'}, "
+            f"호칭={user.nickname or '없음'}, 말투={user.speech_style or '기본'}, "
+            f"대화설정={user.conversation_preferences or []}"
         )
         return (
             f"현재 서버 시각: {now.isoformat()} ({settings.APP_TIMEZONE})\n"
@@ -453,17 +455,20 @@ def _fast_meal_answer(
     user: UserProfile | None = None,
 ) -> str:
     date_text = f"{target_date.month}월 {target_date.day}일"
+    address = _user_address(user)
     if not meals:
         if cold_scheduled:
-            return f"{date_text} 메뉴를 처음 불러오고 있어요.\n잠시 후 ‘다시 조회’를 눌러 주세요."
-        return f"{date_text}에는 확인된 메뉴가 없어요."
+            answer = f"{address}{date_text} 메뉴를 처음 불러오고 있어요.\n잠시 후 ‘다시 조회’를 눌러 주세요."
+        else:
+            answer = f"{address}{date_text}에는 확인된 메뉴가 없어요."
+        return _apply_speech_style(answer, user)
 
     grouped: dict[tuple[str, str], list[Meal]] = {}
     for meal in meals:
         restaurant_code = meal.restaurant.code if meal.restaurant else ""
         grouped.setdefault((restaurant_code, meal.meal_type), []).append(meal)
 
-    lines = [f"🍽 {date_text} 메뉴", ""]
+    lines = [f"🍽 {address}{date_text} 메뉴", ""]
     profile_lines = _profile_reference_lines(user)
     if profile_lines:
         lines.extend(profile_lines)
@@ -482,7 +487,7 @@ def _fast_meal_answer(
             price = f" ({meal.price})" if meal.price else ""
             lines.append(f"{meal_index}. {menu}{price}")
         lines.append("")
-    return "\n".join(lines).strip()
+    return _apply_speech_style("\n".join(lines).strip(), user)
 
 
 def _profile_reference_lines(user: UserProfile | None) -> list[str]:
@@ -504,6 +509,46 @@ def _profile_reference_lines(user: UserProfile | None) -> list[str]:
         notes = [line for line in user.extra_notes.splitlines() if line.strip()][:2]
         if notes:
             settings_parts.append(f"메모: {', '.join(notes)}")
+    if user.nickname:
+        settings_parts.append(f"호칭: {user.nickname}")
+    if user.speech_style:
+        style = "반말" if user.speech_style == "casual" else "존댓말"
+        settings_parts.append(f"말투: {style}")
+    if user.conversation_preferences:
+        settings_parts.append(f"대화: {', '.join((user.conversation_preferences or [])[:2])}")
     if settings_parts:
         lines.append(f"👤 내 설정 · {' · '.join(settings_parts)}")
     return lines
+
+
+def _user_address(user: UserProfile | None) -> str:
+    if user is None or not user.nickname:
+        return ""
+    nickname = user.nickname.strip()
+    if not nickname:
+        return ""
+    if nickname.endswith(("님", "아", "야")):
+        return f"{nickname}, "
+    last = nickname[-1]
+    has_final_consonant = "가" <= last <= "힣" and (ord(last) - ord("가")) % 28 != 0
+    suffix = "아" if has_final_consonant else "야"
+    return f"{nickname}{suffix}, "
+
+
+def _apply_speech_style(text: str, user: UserProfile | None) -> str:
+    if user is None or user.speech_style != "casual":
+        return text
+    replacements = (
+        ("성분은 식당에 확인해 주세요.", "성분은 식당에 확인해 줘."),
+        ("메뉴를 처음 불러오고 있어요.", "메뉴를 처음 불러오고 있어."),
+        ("잠시 후 ‘다시 조회’를 눌러 주세요.", "잠시 후 ‘다시 조회’를 눌러 줘."),
+        ("확인된 메뉴가 없어요.", "확인된 메뉴가 없어."),
+        ("현재 제공 중이며", "지금 제공 중이고"),
+        ("마감되었어요.", "마감됐어."),
+        ("마감해요.", "마감해."),
+        ("제공했어요.", "제공했어."),
+        ("제공해요.", "제공해."),
+    )
+    for source, replacement in replacements:
+        text = text.replace(source, replacement)
+    return text
