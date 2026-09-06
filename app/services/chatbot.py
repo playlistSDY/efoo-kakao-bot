@@ -84,7 +84,6 @@ class MealChatAgent:
 
     def run_result(self, db: Session, user: UserProfile, session: ChatSession, user_text: str) -> AgentResult:
         now = datetime.now(ZoneInfo(settings.APP_TIMEZONE))
-        repo.update_profile_from_text(db, user, user_text)
         history = repo.get_recent_messages(db, session.id)
         current_message_id = _current_message_id(history, user_text)
         executor = ChatToolExecutor(
@@ -93,7 +92,7 @@ class MealChatAgent:
             user_id=user.id,
             excluded_message_ids={current_message_id} if current_message_id else set(),
         )
-        fast_result = self._try_fast_meal_lookup(user_text, now, executor)
+        fast_result = self._try_fast_meal_lookup(user_text, now, executor, user)
         if fast_result:
             return fast_result
         if not settings.OPENAI_API_KEY:
@@ -275,6 +274,7 @@ class MealChatAgent:
         user_text: str,
         now: datetime,
         executor: ChatToolExecutor,
+        user: UserProfile,
     ) -> AgentResult | None:
         if not is_fast_meal_lookup(user_text):
             return None
@@ -294,7 +294,7 @@ class MealChatAgent:
         meals = list(executor.seen_meals.values())[:10]
         cache = payload.get("cache") or {}
         cold_scheduled = bool(cache.get("cold_refresh_scheduled"))
-        answer = _fast_meal_answer(meals, target_date, now, cold_scheduled)
+        answer = _fast_meal_answer(meals, target_date, now, cold_scheduled, user)
         quick_replies = []
         if cold_scheduled and not meals:
             quick_replies = [
@@ -450,6 +450,7 @@ def _fast_meal_answer(
     target_date: date,
     now: datetime,
     cold_scheduled: bool,
+    user: UserProfile | None = None,
 ) -> str:
     date_text = f"{target_date.month}월 {target_date.day}일"
     if not meals:
@@ -462,16 +463,47 @@ def _fast_meal_answer(
         restaurant_code = meal.restaurant.code if meal.restaurant else ""
         grouped.setdefault((restaurant_code, meal.meal_type), []).append(meal)
 
-    lines = [f"{date_text} 메뉴예요.", ""]
-    for (restaurant_code, meal_type), group in grouped.items():
+    lines = [f"🍽 {date_text} 메뉴", ""]
+    profile_lines = _profile_reference_lines(user)
+    if profile_lines:
+        lines.extend(profile_lines)
+        lines.append("")
+    for group_index, ((restaurant_code, meal_type), group) in enumerate(grouped.items()):
+        if group_index:
+            lines.extend(["────────", ""])
         restaurant = group[0].restaurant.name if group[0].restaurant else "식당"
-        lines.append(f"{restaurant} · {meal_type}")
+        lines.append(f"🏫 {restaurant} · {meal_type}")
         service_note = meal_service_note(restaurant_code, meal_type, target_date, now)
         if service_note:
-            lines.append(service_note)
-        for meal in group:
+            lines.append(f"⏰ {service_note}")
+        lines.append("")
+        for meal_index, meal in enumerate(group, start=1):
             menu = ", ".join(meal.korean_name or []) or "메뉴 정보 없음"
             price = f" ({meal.price})" if meal.price else ""
-            lines.append(f"ㆍ{menu}{price}")
+            lines.append(f"{meal_index}. {menu}{price}")
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def _profile_reference_lines(user: UserProfile | None) -> list[str]:
+    if user is None:
+        return []
+    lines = []
+    if user.allergies:
+        allergies = ", ".join((user.allergies or [])[:3])
+        lines.append(f"⚠️ 알레르기 기록: {allergies} · 성분은 식당에 확인해 주세요.")
+
+    settings_parts = []
+    if user.preferences:
+        settings_parts.append(f"선호: {', '.join((user.preferences or [])[:3])}")
+    if user.dislikes:
+        settings_parts.append(f"비선호: {', '.join((user.dislikes or [])[:3])}")
+    if user.budget_limit:
+        settings_parts.append(f"예산: {user.budget_limit:,}원 이하")
+    if user.extra_notes:
+        notes = [line for line in user.extra_notes.splitlines() if line.strip()][:2]
+        if notes:
+            settings_parts.append(f"메모: {', '.join(notes)}")
+    if settings_parts:
+        lines.append(f"👤 내 설정 · {' · '.join(settings_parts)}")
+    return lines

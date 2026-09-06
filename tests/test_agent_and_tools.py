@@ -20,7 +20,7 @@ from app.domain.meal_intent import infer_restaurant_codes, is_fast_meal_lookup
 from app.domain.restaurants import meal_service_note
 from app.models import MealFetchLog
 from app.services.chat_tools import ChatToolExecutor
-from app.services.chatbot import MealChatAgent, _safe_context_mode
+from app.services.chatbot import MealChatAgent, _fast_meal_answer, _safe_context_mode
 from app.services.kakao_templates import build_kakao_response
 from app.services.meals.cache import ensure_fresh_meals
 from app.services.meals.image_cache import MealImageCache
@@ -71,6 +71,61 @@ class EfooAgentTest(unittest.TestCase):
         self.assertEqual(output["meals"][0]["service_time"], "11:30-13:30")
         self.assertEqual(output["meals"][0]["service_note"], "오늘 중식은 현재 제공 중이며 13:30에 마감해요.")
         self.assertEqual(executor.selected_meals([self.meal.id]), [self.meal])
+
+    def test_agent_memory_tool_persists_and_removes_profile_values(self):
+        user = repo.get_or_create_user(self.db, "profile-memory-test")
+        executor = ChatToolExecutor(self.db, user_id=user.id)
+
+        preference = json.loads(
+            executor.execute(
+                "save_user_memory",
+                {"category": "preference", "action": "add", "value": "매운 음식"},
+            )
+        )
+        budget = json.loads(
+            executor.execute(
+                "save_user_memory",
+                {"category": "budget", "action": "set", "value": "7천원"},
+            )
+        )
+        note = json.loads(
+            executor.execute(
+                "save_user_memory",
+                {"category": "note", "action": "add", "value": "채식 메뉴를 우선 추천"},
+            )
+        )
+
+        self.assertTrue(preference["ok"])
+        self.assertEqual(budget["profile"]["budget_limit"], 7000)
+        self.assertIn("채식 메뉴를 우선 추천", note["profile"]["notes"])
+        self.db.refresh(user)
+        self.assertEqual(user.preferences, ["매운 음식"])
+
+        removed = json.loads(
+            executor.execute(
+                "save_user_memory",
+                {"category": "preference", "action": "remove", "value": "매운 음식"},
+            )
+        )
+        self.assertEqual(removed["profile"]["preferences"], [])
+
+    def test_saved_profile_is_always_in_agent_context(self):
+        user = repo.get_or_create_user(self.db, "profile-context-test")
+        repo.save_user_memory(self.db, user, "allergy", "add", "땅콩")
+        repo.save_user_memory(self.db, user, "dislike", "add", "오이")
+        repo.save_user_memory(self.db, user, "budget", "set", "8000원")
+        session = repo.get_or_create_active_session(self.db, user)
+
+        context = MealChatAgent()._build_user_context(
+            user,
+            "오늘 메뉴 추천해줘",
+            datetime(2026, 9, 7, 12, 0, tzinfo=ZoneInfo("Asia/Seoul")),
+            repo.get_recent_messages(self.db, session.id),
+        )
+
+        self.assertIn("알레르기=['땅콩']", context)
+        self.assertIn("비선호=['오이']", context)
+        self.assertIn("예산상한=8000", context)
 
     def test_meal_service_note_uses_target_date_and_current_time(self):
         before_lunch = datetime(2026, 9, 2, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))
@@ -136,8 +191,56 @@ class EfooAgentTest(unittest.TestCase):
         self.assertFalse(is_fast_meal_lookup("오늘 중식 중에서 하나 추천해줘"))
         self.assertFalse(is_fast_meal_lookup("그럼 학생식당은?"))
         self.assertFalse(is_fast_meal_lookup("오늘이랑 내일 점심 비교해줘"))
+        self.assertFalse(is_fast_meal_lookup("나는 매운 음식 좋아해. 오늘 메뉴 알려줘"))
+        self.assertFalse(is_fast_meal_lookup("평소 예산은 7000원이야. 오늘 메뉴 알려줘"))
+        self.assertFalse(is_fast_meal_lookup("땅콩 알레르기 고려해서 오늘 메뉴 알려줘"))
         self.assertEqual(infer_restaurant_codes("학생식당과 교식 메뉴"), ["re11", "re12"])
         self.assertIsNone(infer_restaurant_codes("오늘 중식 식당별로 정리해줘"))
+
+    def test_fast_meal_answer_uses_readable_restaurant_sections(self):
+        second_restaurant = repo.get_or_create_restaurant(self.db, "re11", "교직원식당")
+        second_meal = repo.create_meal(
+            self.db,
+            second_restaurant.id,
+            date(2026, 9, 2),
+            "수",
+            "중식",
+            ["불고기", "잡곡밥"],
+            [],
+            "7,000원",
+            "",
+        )
+
+        answer = _fast_meal_answer(
+            [self.meal, second_meal],
+            date(2026, 9, 2),
+            datetime(2026, 9, 2, 12, 0, tzinfo=ZoneInfo("Asia/Seoul")),
+            False,
+        )
+
+        self.assertIn("🍽 9월 2일 메뉴", answer)
+        self.assertIn("🏫 학생식당 · 중식", answer)
+        self.assertIn("⏰ 오늘 중식은 현재 제공 중이며 13:30에 마감해요.", answer)
+        self.assertIn("────────", answer)
+        self.assertIn("1. 제육볶음, 쌀밥 (5,000원)", answer)
+
+    def test_fast_meal_answer_references_saved_profile(self):
+        user = repo.get_or_create_user(self.db, "fast-profile-test")
+        repo.save_user_memory(self.db, user, "allergy", "add", "땅콩")
+        repo.save_user_memory(self.db, user, "preference", "add", "매운 음식")
+        repo.save_user_memory(self.db, user, "dislike", "add", "오이")
+        repo.save_user_memory(self.db, user, "budget", "set", "7000원")
+
+        answer = _fast_meal_answer(
+            [self.meal],
+            date(2026, 9, 2),
+            datetime(2026, 9, 2, 12, 0, tzinfo=ZoneInfo("Asia/Seoul")),
+            False,
+            user,
+        )
+
+        self.assertIn("⚠️ 알레르기 기록: 땅콩", answer)
+        self.assertIn("👤 내 설정 · 선호: 매운 음식 · 비선호: 오이 · 예산: 7,000원 이하", answer)
 
     def test_fast_lookup_skips_openai_and_uses_cached_meal(self):
         user = repo.get_or_create_user(self.db, "fast-agent-test")

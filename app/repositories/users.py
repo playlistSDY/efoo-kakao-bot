@@ -19,41 +19,65 @@ def get_or_create_user(db: Session, kakao_user_id: str) -> UserProfile:
     return user
 
 
-def update_profile_from_text(db: Session, user: UserProfile, text: str) -> UserProfile:
-    allergies = _extract_after_keywords(text, ["알러지", "알레르기", "못 먹어"])
-    preferences = _extract_after_keywords(text, ["좋아해", "선호", "취향"])
-    dislikes = _extract_after_keywords(text, ["싫어", "비선호"])
-    budget = _extract_budget(text)
-
-    if allergies:
-        user.allergies = _merge_list(user.allergies or [], allergies)
-    if preferences:
-        user.preferences = _merge_list(user.preferences or [], preferences)
-    if dislikes:
-        user.dislikes = _merge_list(user.dislikes or [], dislikes)
-    if budget:
-        user.budget_limit = budget
+def save_user_memory(
+    db: Session,
+    user: UserProfile,
+    category: str,
+    action: str,
+    value: str | None,
+) -> UserProfile:
+    list_fields = {
+        "allergy": "allergies",
+        "preference": "preferences",
+        "dislike": "dislikes",
+    }
+    if category in list_fields:
+        field_name = list_fields[category]
+        current = list(getattr(user, field_name) or [])
+        cleaned = _clean_memory_value(value)
+        if action == "add" and cleaned:
+            setattr(user, field_name, _merge_list(current, [cleaned]))
+        elif action == "remove" and cleaned:
+            setattr(user, field_name, [item for item in current if item != cleaned])
+        elif action == "clear":
+            setattr(user, field_name, [])
+        else:
+            raise ValueError("목록 기억에는 add, remove, clear 작업을 사용할 수 있습니다.")
+    elif category == "budget":
+        if action == "clear":
+            user.budget_limit = None
+        elif action == "set":
+            budget = _extract_budget(value or "")
+            if budget is None:
+                raise ValueError("예산은 '7000원'처럼 금액으로 저장해야 합니다.")
+            user.budget_limit = budget
+        else:
+            raise ValueError("예산 기억에는 set 또는 clear 작업을 사용할 수 있습니다.")
+    elif category == "note":
+        notes = [line for line in (user.extra_notes or "").splitlines() if line.strip()]
+        cleaned = _clean_memory_value(value)
+        if action == "add" and cleaned:
+            notes = _merge_list(notes, [cleaned])
+        elif action == "remove" and cleaned:
+            notes = [note for note in notes if note != cleaned]
+        elif action == "clear":
+            notes = []
+        else:
+            raise ValueError("메모 기억에는 add, remove, clear 작업을 사용할 수 있습니다.")
+        user.extra_notes = "\n".join(notes) or None
+    else:
+        raise ValueError(f"지원하지 않는 사용자 기억 분류: {category}")
 
     db.commit()
     db.refresh(user)
     return user
 
 
-def _extract_after_keywords(text: str, keywords: list[str]) -> list[str]:
-    for keyword in keywords:
-        if keyword not in text:
-            continue
-        tail = text.split(keyword, 1)[1]
-        tail = re.sub(r"(있어|있음|야|입니다|이에요|예요|해|해요|함|이야)", " ", tail)
-        return [item.strip(" ,./") for item in re.split(r"[,/와과랑및 ]+", tail) if len(item.strip(" ,./")) >= 2][:6]
-    return []
-
-
 def _extract_budget(text: str) -> int | None:
-    match = re.search(r"(\d{1,2})\s*(천원|만원|원)", text)
+    match = re.search(r"(\d{1,3}(?:,\d{3})+|\d+)\s*(천원|만원|원)", text)
     if not match:
         return None
-    amount = int(match.group(1))
+    amount = int(match.group(1).replace(",", ""))
     unit = match.group(2)
     if unit == "만원":
         return amount * 10000
@@ -68,3 +92,7 @@ def _merge_list(current: list[str], new_items: list[str]) -> list[str]:
         if item and item not in merged:
             merged.append(item)
     return merged[:20]
+
+
+def _clean_memory_value(value: str | None) -> str:
+    return re.sub(r"\s+", " ", value or "").strip(" ,./")[:100]

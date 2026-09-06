@@ -14,7 +14,7 @@ from app.repositories.restaurants import (
     get_restaurant_by_code,
     sync_restaurant_info,
 )
-from app.repositories.users import get_or_create_user, update_profile_from_text
+from app.repositories.users import get_or_create_user, save_user_memory
 
 
 __all__ = [
@@ -33,6 +33,6 @@ __all__ = [
     "get_recent_messages",
     "get_user_messages",
     "get_restaurant_by_code",
+    "save_user_memory",
     "sync_restaurant_info",
-    "update_profile_from_text",
 ]

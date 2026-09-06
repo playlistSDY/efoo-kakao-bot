@@ -17,7 +17,7 @@ from app.domain.restaurants import (
     meal_service_time,
     meal_type_status,
 )
-from app.models import Meal
+from app.models import Meal, UserProfile
 from app.services.meals.cache import ensure_fresh_meals
 from app.services.meals.image_cache import public_meal_image_url
 
@@ -108,6 +108,34 @@ CHAT_TOOLS = [
         },
         "strict": True,
     },
+    {
+        "type": "function",
+        "name": "save_user_memory",
+        "description": (
+            "사용자가 명확히 밝힌 장기적인 식사 관련 정보만 프로필 DB에 저장·수정·삭제한다. "
+            "알레르기, 반복되는 선호/비선호, 평소 예산, 식사 관련 메모에 사용한다. 오늘 한 번만의 요구는 저장하지 않는다."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "enum": ["allergy", "preference", "dislike", "budget", "note"],
+                },
+                "action": {"type": "string", "enum": ["add", "remove", "set", "clear"]},
+                "value": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "저장하거나 삭제할 짧은 값. 선호/비선호/알레르기는 '매운 음식', '오이', '땅콩'처럼 "
+                        "분류 표현을 뺀 핵심 명사만 쓴다. 전체 삭제(clear)라면 null"
+                    ),
+                },
+            },
+            "required": ["category", "action", "value"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
 ]
 
 
@@ -129,6 +157,8 @@ class ChatToolExecutor:
                 result = self._get_restaurant_info(arguments)
             elif name == "recall_conversation":
                 result = self._recall_conversation(arguments)
+            elif name == "save_user_memory":
+                result = self._save_user_memory(arguments)
             else:
                 result = {"ok": False, "error": f"알 수 없는 도구: {name}"}
         except (TypeError, ValueError) as exc:
@@ -255,6 +285,30 @@ class ChatToolExecutor:
                 }
                 for message in selected
             ],
+        }
+
+    def _save_user_memory(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.user_id is None:
+            return {"ok": False, "error": "사용자 프로필을 확인할 수 없습니다."}
+        user = self.db.get(UserProfile, self.user_id)
+        if user is None:
+            return {"ok": False, "error": "사용자 프로필을 찾지 못했습니다."}
+        user = repo.save_user_memory(
+            self.db,
+            user,
+            str(arguments.get("category", "")),
+            str(arguments.get("action", "")),
+            arguments.get("value"),
+        )
+        return {
+            "ok": True,
+            "profile": {
+                "allergies": user.allergies or [],
+                "preferences": user.preferences or [],
+                "dislikes": user.dislikes or [],
+                "budget_limit": user.budget_limit,
+                "notes": [line for line in (user.extra_notes or "").splitlines() if line.strip()],
+            },
         }
 
 
